@@ -29,8 +29,8 @@ python app.py ~/Documents/my_pdfs
 ## Features
 
 - **Interactive PDF Viewing**: Navigate through multiple PDFs and pages with smooth rendering
-- **Rectangle Mask Creation**: Draw rectangular masks over PDF content using drag-and-drop
-- **Mask Editing**: Move, modify, and delete masks with visual feedback
+- **Rectangle Mask Creation**: Draw rectangular masks over PDF content using drag-and-drop, or automatically generate masks from vector graphics
+- **Mask Editing**: Move, resize using edge handles, and delete masks with visual feedback
 - **Page Approval Workflow**: Systematic approval process for quality control
 - **Batch Export**: Export all approved masks to PNG files with metadata
 - **State Persistence**: All work is automatically saved and restored between sessions
@@ -71,21 +71,23 @@ The application window consists of four main areas:
 ### Working with Masks
 
 #### Creating Masks
-1. Click "Draw New Mask" in the toolbar
-2. Click points on the PDF to define polygon vertices
-3. Double-click to complete the polygon
-4. The tool automatically switches back to select mode
+1. Click "Draw Rectangle Mask" in the toolbar.
+2. Click and drag on the PDF page to draw a rectangle.
+3. Release the mouse button to complete the rectangle.
+4. Click "Accept Mask" to save it, or "Cancel" to discard.
+5. Masks can also be automatically generated using the "Recompute Masks" button.
 
 #### Editing Masks
-1. Ensure "Select/Move" mode is active (default)
-2. Click on any mask to select it
-3. Drag the mask to move it
-4. Use the mask panel or right-click menu to delete masks
+1. Ensure "Select/Move" mode is active (default).
+2. Click on any mask to select it.
+3. Drag the mask to move it.
+4. Drag the small circular handles on the edges of a selected mask to resize it.
+5. Use the mask panel or keyboard shortcuts to delete masks.
 
 #### Mask Management
-- **Selection**: Click masks in the viewer or mask list to select them
-- **Deletion**: Right-click masks in the list or use the "Delete Selected Mask" button
-- **Visual Feedback**: Masks highlight when hovered over
+- **Selection**: Click masks in the viewer or mask list to select them. Multi-selection is supported using `Ctrl` + click.
+- **Deletion**: Select masks and press `Delete` or `Backspace`, or right-click masks in the list and choose "Delete Selected Mask(s)".
+- **Visual Feedback**: Masks highlight when hovered over.
 
 ### Page Approval Workflow
 
@@ -93,6 +95,7 @@ The application window consists of four main areas:
 2. **Approve**: Click "Approve Page" or press `Ctrl + Enter`
 3. **Auto-Navigation**: The tool automatically moves to the next unapproved page
 4. **Status Tracking**: PDF list shows approval progress (e.g., "✓ document.pdf (3/5)")
+5. **Bulk Approval**: Click "Accept All Pages" to approve all pages in the current PDF.
 
 ### Export Process
 
@@ -116,7 +119,10 @@ The application window consists of four main areas:
 | Zoom Out | `Ctrl + -` |
 | Fit to View | `Ctrl + 0` |
 | **Workflow** |
-| Approve Page | `Ctrl + Enter` |
+| Accept Mask | `Enter` |
+| Delete Selected Mask | `Delete` or `Backspace` |
+| Approve Current Page | `Ctrl + Enter` |
+| Accept All Pages in PDF | `Ctrl + Shift + Enter` |
 | Show Help | `F1` |
 
 ## File Structure and Data Storage
@@ -196,18 +202,27 @@ output/
 - **Pillow**: Image processing and export
 - **Python 3.8+**: Core runtime
 
+### Core Modules
+
+- `app.py`: Main application entry point, handles PDF loading and GUI initialization.
+- `gui.py`: Implements the main graphical user interface, including PDF viewer, navigation, and mask management.
+- `editable_mask.py`: Defines interactive `QGraphicsItem` subclasses for drawing and resizing masks within the GUI.
+- `storage.py`: Manages the persistence of application state, including mask data and page approval status, using JSON sidecar files.
+- `export.py`: Handles the export of approved masks to image files and generates manifest files.
+- `vector_bbox.py`: Provides functionality for automatic detection and extraction of bounding boxes from vector graphics in PDFs.
+
 ### Performance Considerations
 
-- **Rendering**: Pages are rendered at 150 DPI for viewing, 300 DPI for export
-- **Memory**: Large PDFs are processed page-by-page to minimize memory usage
-- **Storage**: State files use efficient JSON format with minimal overhead
+- **Rendering**: Pages are rendered at 300 DPI for both viewing and export to maintain consistency and quality.
+- **Memory**: Large PDFs are processed page-by-page to minimize memory usage.
+- **Storage**: State files use efficient JSON format with minimal overhead.
 
 ### Error Handling
 
-- **Corrupted PDFs**: Automatically skipped with console warnings
-- **Password-protected PDFs**: Detected and skipped with user notification
-- **Missing files**: Graceful degradation with error messages
-- **Export errors**: Detailed error reporting with recovery suggestions
+- **Corrupted PDFs**: Automatically skipped with console warnings.
+- **Password-protected PDFs**: Detected and skipped with user notification.
+- **Missing files**: Graceful degradation with error messages.
+- **Export errors**: Detailed error reporting with recovery suggestions.
 
 ## Troubleshooting
 
@@ -244,13 +259,17 @@ pip install Pillow
 ```
 pdf-extraction/
 ├── app.py              # Main application entry point
-├── gui.py              # GUI components and main window
-├── storage.py          # State management and persistence
+├── editable_mask.py    # Interactive mask drawing and resizing
 ├── export.py           # Export functionality and image processing
+├── gui.py              # GUI components and main window
 ├── requirements.txt    # Python dependencies
+├── storage.py          # State management and persistence
+├── vector_bbox.py      # Automatic vector graphics bounding box detection
 ├── docs/
 │   └── README.md      # This documentation
-└── test_pdfs/         # Sample PDFs for testing
+├── original_pdfs/      # Directory for original PDF files
+├── output/             # Directory for exported images and manifests
+└── test_pdfs/          # Sample PDFs for testing
 ```
 
 ### Architecture
@@ -263,7 +282,3 @@ pdf-extraction/
 ## License
 
 This project is provided as-is for educational and research purposes.
-
-## Support
-
-For issues, questions, or contributions, please refer to the project documentation or contact the development team.
