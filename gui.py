@@ -161,6 +161,9 @@ class PageScene(QGraphicsScene):
                 if isinstance(item, EditableMaskItem):
                     self.mask_selected.emit(item.mask_id)
                     break
+        else:
+            # If nothing is selected, emit a signal to clear selection in the list
+            self.mask_selected.emit("")
 
     def set_mode(self, mode: int):
         self.mode = mode
@@ -230,18 +233,6 @@ class PageScene(QGraphicsScene):
                 self.rectangle_drawn.emit(rect)
             else:
                 self.cancel_current_drawing()
-        elif self.mode == self.MODE_SELECT and event.button() == Qt.MouseButton.LeftButton:
-            # In select mode, check if a mask was clicked
-            clicked_item = self.itemAt(event.scenePos(), self.views()[0].viewportTransform())
-            if isinstance(clicked_item, EditableMaskItem):
-                # Handle multi-selection with Ctrl/Cmd key
-                if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
-                    # Toggle selection of clicked item
-                    clicked_item.setSelected(not clicked_item.isSelected())
-                else:
-                    # Clear selection first, then select only this item
-                    self.clearSelection()
-                    clicked_item.setSelected(True)
 
         super().mouseReleaseEvent(event)
 
@@ -425,6 +416,11 @@ class MainWindow(QMainWindow):
         self.current_pixmap = None
         self.is_continuous_draw_mode: bool = False
         self.page_scene: Optional[PageScene] = None
+        
+        # Zoom state tracking
+        self.zoom_mode = "none"  # "none", "fit_to_view", "fit_to_width", "manual"
+        self.has_user_zoom_preference = False
+        self.manual_zoom_transform = None
 
         self.init_ui()
         self.load_first_pdf()
@@ -540,6 +536,7 @@ class MainWindow(QMainWindow):
         self.page_scene = PageScene(self)
         self.graphics_view.setScene(self.page_scene)
         layout.addWidget(self.graphics_view)
+        self.graphics_view.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
 
         self.page_scene.mask_created.connect(self.on_mask_created)
         self.page_scene.mask_modified.connect(self.on_mask_modified)
@@ -691,9 +688,9 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage("No mask selected to delete.", 3000)
 
     def showEvent(self, event):
-        """Override showEvent to ensure fit_to_width is called after window is shown."""
+        """Override showEvent to ensure default zoom is applied on first show."""
         super().showEvent(event)
-        if self.page_scene:
+        if self.page_scene and not self.has_user_zoom_preference:
             self.fit_to_width()
 
     def load_first_pdf(self):
@@ -743,14 +740,22 @@ class MainWindow(QMainWindow):
     def zoom_in(self):
         """Zoom in the graphics view."""
         self.graphics_view.scale(1.25, 1.25)
+        self.zoom_mode = "manual"
+        self.has_user_zoom_preference = True
+        self.manual_zoom_transform = self.graphics_view.transform()
 
     def zoom_out(self):
         """Zoom out the graphics view."""
         self.graphics_view.scale(0.8, 0.8)
+        self.zoom_mode = "manual"
+        self.has_user_zoom_preference = True
+        self.manual_zoom_transform = self.graphics_view.transform()
 
     def fit_to_view(self):
         """Fit the page to the view."""
         self.graphics_view.fitInView(self.page_scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+        self.zoom_mode = "fit_to_view"
+        self.has_user_zoom_preference = True
 
     def fit_to_width(self):
         """Fit the page to the width of the view."""
@@ -764,6 +769,28 @@ class MainWindow(QMainWindow):
 
         self.graphics_view.resetTransform()
         self.graphics_view.scale(scale_factor, scale_factor)
+        self.zoom_mode = "fit_to_width"
+        self.has_user_zoom_preference = True
+
+    def apply_zoom_preference(self):
+        """Apply the user's zoom preference or default to fit_to_width for first time."""
+        if not self.has_user_zoom_preference:
+            # First time or no preference set - use default fit to width
+            self.fit_to_width()
+        elif self.zoom_mode == "fit_to_view":
+            self.graphics_view.fitInView(self.page_scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+        elif self.zoom_mode == "fit_to_width":
+            if self.page_scene.sceneRect().isValid():
+                view_rect = self.graphics_view.viewport().rect()
+                scene_rect = self.page_scene.sceneRect()
+                scale_factor = view_rect.width() / scene_rect.width()
+                self.graphics_view.resetTransform()
+                self.graphics_view.scale(scale_factor, scale_factor)
+        elif self.zoom_mode == "manual" and self.manual_zoom_transform:
+            # For manual zoom, try to preserve the relative zoom level
+            # Get the current scene rect and apply similar transform
+            if self.page_scene.sceneRect().isValid():
+                self.graphics_view.setTransform(self.manual_zoom_transform)
 
     def update_display(self):
         """Update the display with the current page."""
@@ -810,7 +837,9 @@ class MainWindow(QMainWindow):
 
         self.prev_page_btn.setEnabled(self.current_page_index > 0)
         self.next_page_btn.setEnabled(self.current_page_index < state["page_count"] - 1)
-        self.fit_to_width()
+        
+        # Apply zoom only if user hasn't set a preference, or preserve their preference
+        self.apply_zoom_preference()
 
     def update_mask_list(self):
         """Update the mask list widget for the current page."""
@@ -848,6 +877,7 @@ class MainWindow(QMainWindow):
 
         if self.is_continuous_draw_mode:
             self.page_scene.set_mode(PageScene.MODE_DRAW)
+            self.graphics_view.setDragMode(QGraphicsView.DragMode.NoDrag)
             self.draw_mode_action.setChecked(True)
             self.select_mode_action.setChecked(False)
 
@@ -862,6 +892,7 @@ class MainWindow(QMainWindow):
         else:
             self.is_continuous_draw_mode = False
             self.page_scene.set_mode(PageScene.MODE_SELECT)
+            self.graphics_view.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
             self.draw_mode_action.setChecked(False)
             self.select_mode_action.setChecked(True)
             self.status_bar.showMessage("Continuous mask drawing mode deactivated.", 3000)
@@ -870,6 +901,7 @@ class MainWindow(QMainWindow):
         """Activate select/move mode and deactivate continuous draw mode."""
         self.is_continuous_draw_mode = False
         self.page_scene.set_mode(PageScene.MODE_SELECT)
+        self.graphics_view.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
         self.select_mode_action.setChecked(True)
         self.draw_mode_action.setChecked(False)
         self.status_bar.showMessage("Select/Move mode activated.", 3000)
@@ -1037,40 +1069,45 @@ class MainWindow(QMainWindow):
 
     def on_mask_selected_in_scene(self, mask_id: str):
         """Handle mask selection from the scene and update list selection."""
-        # Get all currently selected items in the scene
-        selected_scene_items = self.page_scene.selectedItems()
-        selected_mask_ids = []
-        for item in selected_scene_items:
-            if isinstance(item, EditableMaskItem):
-                selected_mask_ids.append(item.mask_id)
-
         self.mask_list_widget.blockSignals(True)
-        self.mask_list_widget.clearSelection()
+        
+        if mask_id == "": # No mask selected, clear all selections
+            self.mask_list_widget.clearSelection()
+            self.status_bar.showMessage("No mask selected", 3000)
+        else:
+            # Get all currently selected items in the scene
+            selected_scene_items = self.page_scene.selectedItems()
+            selected_mask_ids = []
+            for item in selected_scene_items:
+                if isinstance(item, EditableMaskItem):
+                    selected_mask_ids.append(item.mask_id)
 
-        # Select corresponding items in the list
-        for i in range(self.mask_list_widget.count()):
-            item = self.mask_list_widget.item(i)
-            item_mask_id = item.data(Qt.ItemDataRole.UserRole)
-            if item_mask_id in selected_mask_ids:
-                item.setSelected(True)
-                # Scroll to the first selected item
-                if item_mask_id == mask_id:
-                    self.mask_list_widget.scrollToItem(item)
+            self.mask_list_widget.clearSelection()
 
-        # Update status bar based on number of selections
-        if len(selected_mask_ids) == 1:
-            if mask_id in self.page_scene.current_masks:
-                mask_item = self.page_scene.current_masks[mask_id]
-                rect = mask_item.rect()
-                width = round(rect.width())
-                height = round(rect.height())
-                self.status_bar.showMessage(
-                    f"Selected mask: {mask_id[:8]}... (Width: {width}px, Height: {height}px)"
-                )
-            else:
-                self.status_bar.showMessage(f"Selected mask: {mask_id[:8]}...")
-        elif len(selected_mask_ids) > 1:
-            self.status_bar.showMessage(f"Selected {len(selected_mask_ids)} masks")
+            # Select corresponding items in the list
+            for i in range(self.mask_list_widget.count()):
+                item = self.mask_list_widget.item(i)
+                item_mask_id = item.data(Qt.ItemDataRole.UserRole)
+                if item_mask_id in selected_mask_ids:
+                    item.setSelected(True)
+                    # Scroll to the first selected item
+                    if item_mask_id == mask_id:
+                        self.mask_list_widget.scrollToItem(item)
+
+            # Update status bar based on number of selections
+            if len(selected_mask_ids) == 1:
+                if mask_id in self.page_scene.current_masks:
+                    mask_item = self.page_scene.current_masks[mask_id]
+                    rect = mask_item.rect()
+                    width = round(rect.width())
+                    height = round(rect.height())
+                    self.status_bar.showMessage(
+                        f"Selected mask: {mask_id[:8]}... (Width: {width}px, Height: {height}px)"
+                    )
+                else:
+                    self.status_bar.showMessage(f"Selected mask: {mask_id[:8]}...")
+            elif len(selected_mask_ids) > 1:
+                self.status_bar.showMessage(f"Selected {len(selected_mask_ids)} masks")
 
         self.mask_list_widget.blockSignals(False)
 
