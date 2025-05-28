@@ -431,6 +431,89 @@ class HelpDialog(QDialog):
         </ul>
         """
 
+class MaskPropertiesDock(QDockWidget):
+    """A dock widget to display properties of the selected mask."""
+
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__("Mask Properties", parent)
+        self.init_ui()
+
+    def init_ui(self):
+        content_widget = QWidget()
+        layout = QVBoxLayout(content_widget)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(5)
+
+        self.properties_labels: Dict[str, QLabel] = {}
+
+        # Helper to add a property row
+        def add_property_row(label_text: str, key: str):
+            row_layout = QHBoxLayout()
+            row_layout.addWidget(QLabel(f"<b>{label_text}:</b>"))
+            value_label = QLabel("N/A")
+            self.properties_labels[key] = value_label
+            row_layout.addWidget(value_label)
+            row_layout.addStretch()
+            layout.addLayout(row_layout)
+
+        add_property_row("Mask ID", "id")
+        add_property_row("Top-Left X", "x")
+        add_property_row("Top-Left Y", "y")
+        add_property_row("Width", "width")
+        add_property_row("Height", "height")
+        add_property_row("Area", "area")
+        add_property_row("Aspect Ratio", "aspect_ratio")
+
+        layout.addStretch() # Push content to top
+
+        self.setWidget(content_widget)
+        self.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetFloatable | QDockWidget.DockWidgetFeature.DockWidgetMovable)
+        self.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea | Qt.DockWidgetArea.LeftDockWidgetArea)
+
+    def update_properties(self, mask_item: Optional[EditableMaskItem]):
+        """
+        Update the displayed properties based on the selected mask.
+
+        Parameters
+        ----------
+        mask_item : Optional[EditableMaskItem]
+            The selected EditableMaskItem, or None if no mask is selected or multiple are selected.
+        """
+        if mask_item is None:
+            for key in self.properties_labels:
+                self.properties_labels[key].setText("N/A")
+            self.setWindowTitle("Mask Properties")
+        else:
+            try:
+                mask_id = mask_item.mask_id
+                points = mask_item.get_points()
+                
+                # Points are [top-left, top-right, bottom-right, bottom-left]
+                x0, y0 = points[0][0], points[0][1]
+                x1, y1 = points[2][0], points[2][1] # bottom-right
+
+                width = x1 - x0
+                height = y1 - y0
+                area = width * height
+                aspect_ratio = width / height if height != 0 else float('inf')
+
+                self.properties_labels["id"].setText(f"{mask_id[:8]}...")
+                self.properties_labels["x"].setText(f"{x0:.2f} px")
+                self.properties_labels["y"].setText(f"{y0:.2f} px")
+                self.properties_labels["width"].setText(f"{width:.2f} px")
+                self.properties_labels["height"].setText(f"{height:.2f} px")
+                self.properties_labels["area"].setText(f"{area:.2f} px²")
+                self.properties_labels["aspect_ratio"].setText(f"{aspect_ratio:.2f}")
+                self.setWindowTitle(f"Mask Properties: {mask_id[:8]}...")
+
+            except Exception as e:
+                # Fallback in case of error
+                for key in self.properties_labels:
+                    self.properties_labels[key].setText("Error")
+                self.setWindowTitle("Mask Properties (Error)")
+                print(f"Error updating mask properties: {e}")
+
+
 class CombinedZoomButton(QWidget):
     """A combined zoom button with zoom in and zoom out functionality."""
     
@@ -526,6 +609,7 @@ class MainWindow(QMainWindow):
         self.current_pixmap = None
         self.is_continuous_draw_mode: bool = False
         self.page_scene: Optional[PageScene] = None
+        self.mask_properties_dock: Optional[MaskPropertiesDock] = None # New instance variable
         
         # Zoom state tracking
         self.zoom_mode = "none"  # "none", "fit_to_view", "fit_to_width", "manual"
@@ -559,6 +643,7 @@ class MainWindow(QMainWindow):
         splitter.setSizes([300, 900])
 
         self.create_mask_dock()
+        self.create_mask_properties_dock() # New call to create properties dock
 
         splitter.setSizes([200, 700])
 
@@ -566,6 +651,11 @@ class MainWindow(QMainWindow):
         self.create_toolbar()
         self.setup_shortcuts()
         self.create_menu_bar()
+
+    def create_mask_properties_dock(self):
+        """Create the mask properties dock widget."""
+        self.mask_properties_dock = MaskPropertiesDock(self)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.mask_properties_dock)
 
     def create_pdf_list_panel(self, parent):
         """Create the PDF list panel."""
@@ -1231,18 +1321,24 @@ class MainWindow(QMainWindow):
 
             # Update status bar based on number of selections
             if selected_count == 1:
-                if mask_id in self.page_scene.current_masks:
-                    mask_item = self.page_scene.current_masks[mask_id]
+                mask_item = self.page_scene.current_masks.get(mask_id)
+                if mask_item:
                     rect = mask_item.rect()
                     width = round(rect.width())
                     height = round(rect.height())
                     self.status_bar.showMessage(
                         f"Selected mask: {mask_id[:8]}... (Width: {width}px, Height: {height}px)"
                     )
+                    self.mask_properties_dock.update_properties(mask_item)
                 else:
                     self.status_bar.showMessage(f"Selected mask: {mask_id[:8]}...")
+                    self.mask_properties_dock.update_properties(None) # Should not happen if mask_id is valid
             elif selected_count > 1:
                 self.status_bar.showMessage(f"Selected {selected_count} masks")
+                self.mask_properties_dock.update_properties(None) # Clear properties for multi-selection
+            else:
+                self.status_bar.showMessage("No mask selected", 3000)
+                self.mask_properties_dock.update_properties(None) # Clear properties for no selection
         
         can_merge = selected_count >= 2
         self.merge_masks_btn.setEnabled(can_merge)
@@ -1257,15 +1353,7 @@ class MainWindow(QMainWindow):
     def on_mask_list_selection_changed(self):
         """Sync scene selection from mask list selection."""
         selected_list_items = self.mask_list_widget.selectedItems()
-        if not selected_list_items:
-            self.page_scene.clearSelection()
-            self.status_bar.showMessage("No mask selected", 3000)
-            self.merge_masks_btn.setEnabled(False)
-            self.merge_masks_action.setEnabled(False)
-            self.split_mask_btn.setEnabled(False)
-            self.split_mask_action.setEnabled(False)
-            return
-
+        
         selected_mask_ids = [item.data(Qt.ItemDataRole.UserRole) for item in selected_list_items]
 
         self.page_scene.blockSignals(True)
@@ -1273,27 +1361,34 @@ class MainWindow(QMainWindow):
 
         # Select all corresponding masks in the scene
         selected_count = 0
+        selected_mask_item: Optional[EditableMaskItem] = None
         for mask_id in selected_mask_ids:
             if mask_id in self.page_scene.current_masks:
                 mask_item = self.page_scene.current_masks[mask_id]
                 mask_item.setSelected(True)
                 selected_count += 1
+                if selected_count == 1: # Keep track of the first selected item for properties display
+                    selected_mask_item = mask_item
 
-        # Update status bar based on number of selections
+        # Update status bar and properties dock based on number of selections
         if selected_count == 1:
-            mask_id = selected_mask_ids[0]
-            if mask_id in self.page_scene.current_masks:
-                mask_item = self.page_scene.current_masks[mask_id]
-                rect = mask_item.rect()
+            if selected_mask_item:
+                rect = selected_mask_item.rect()
                 width = round(rect.width())
                 height = round(rect.height())
                 self.status_bar.showMessage(
-                    f"Selected mask: {mask_id[:8]}... (Width: {width}px, Height: {height}px)"
+                    f"Selected mask: {selected_mask_item.mask_id[:8]}... (Width: {width}px, Height: {height}px)"
                 )
+                self.mask_properties_dock.update_properties(selected_mask_item)
             else:
-                self.status_bar.showMessage(f"Selected mask: {mask_id[:8]}...")
+                self.status_bar.showMessage("No mask selected", 3000) # Should not happen
+                self.mask_properties_dock.update_properties(None)
         elif selected_count > 1:
             self.status_bar.showMessage(f"Selected {selected_count} masks")
+            self.mask_properties_dock.update_properties(None) # Clear properties for multi-selection
+        else:
+            self.status_bar.showMessage("No mask selected", 3000)
+            self.mask_properties_dock.update_properties(None) # Clear properties for no selection
 
         can_merge = selected_count >= 2
         self.merge_masks_btn.setEnabled(can_merge)
@@ -1304,10 +1399,9 @@ class MainWindow(QMainWindow):
         self.split_mask_action.setEnabled(can_split)
 
         # Ensure the first selected mask is visible
-        if selected_count > 0 and selected_mask_ids[0] in self.page_scene.current_masks:
-            first_mask = self.page_scene.current_masks[selected_mask_ids[0]]
+        if selected_mask_item:
             view = self.graphics_view
-            view.ensureVisible(first_mask)
+            view.ensureVisible(selected_mask_item)
 
         self.page_scene.blockSignals(False)
 
