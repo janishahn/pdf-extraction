@@ -1,6 +1,7 @@
 from typing import List, Tuple, Dict, Any, Optional
 import os
 import export
+from export import check_all_pages_approved
 import vector_bbox
 from editable_mask import EditableMaskItem
 
@@ -663,6 +664,11 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(pdf_panel)
 
         layout.addWidget(QLabel("PDF Files:"))
+
+        # Add approval counter
+        self.approval_counter_label = QLabel()
+        self.update_approval_counter()
+        layout.addWidget(self.approval_counter_label)
 
         self.pdf_list = QListWidget()
         for pdf_path, state in self.pdf_states:
@@ -1424,6 +1430,30 @@ class MainWindow(QMainWindow):
             pdf_path, state = self.pdf_states[pdf_index]
             new_name = self.get_pdf_display_name(pdf_path, state)
             self.pdf_list.item(pdf_index).setText(new_name)
+            self.update_approval_counter()
+
+    def update_approval_counter(self):
+        """Update the approval counter label showing how many PDFs are completely approved."""
+        total_pdfs = len(self.pdf_states)
+        approved_pdfs = 0
+        
+        for pdf_path, _ in self.pdf_states:
+            is_approved, _ = check_all_pages_approved(pdf_path)
+            if is_approved:
+                approved_pdfs += 1
+        
+        self.approval_counter_label.setText(f"Approved: {approved_pdfs}/{total_pdfs} PDFs")
+        
+        if approved_pdfs == total_pdfs and total_pdfs > 0:
+            self.approval_counter_label.setStyleSheet(
+                "color: white; background-color: #2d5a27; font-weight: bold; "
+                "padding: 4px 8px; border-radius: 4px; border: 1px solid #1e3d1b;"
+            )
+        else:
+            self.approval_counter_label.setStyleSheet(
+                "color: white; background-color: #424242; font-weight: bold; "
+                "padding: 4px 8px; border-radius: 4px; border: 1px solid #333333;"
+            )
 
     def show_help(self):
         """Show the help dialog."""
