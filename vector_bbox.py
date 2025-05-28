@@ -26,6 +26,12 @@ def get_page_vector_boxes(pdf_path: str, page_index: int, dpi: int = 300, merge_
     List[Tuple[float, float, float, float]]
         List of bounding boxes as (x0, y0, x1, y1) tuples, scaled to match rendered DPI with padding applied
     """
+    # Define the dimensions of the recurring graphic to be filtered out
+    TARGET_GRAPHIC_WIDTH = 716.26
+    TARGET_GRAPHIC_HEIGHT = 102.84
+    # Tolerance for dimension comparison to account for floating-point inaccuracies
+    DIMENSION_TOLERANCE = 1.5 
+
     try:
         doc = fitz.open(pdf_path)
         if page_index >= len(doc):
@@ -57,7 +63,20 @@ def get_page_vector_boxes(pdf_path: str, page_index: int, dpi: int = 300, merge_
                     rect.x1 * scale_factor,
                     rect.y1 * scale_factor
                 )
-                raw_boxes.append(scaled_box)
+                
+                # Calculate dimensions of the scaled box
+                box_width = scaled_box[2] - scaled_box[0]
+                box_height = scaled_box[3] - scaled_box[1]
+
+                # Check if the box matches the target dimensions for the recurring graphic
+                is_target_graphic = (
+                    abs(box_width - TARGET_GRAPHIC_WIDTH) < DIMENSION_TOLERANCE and
+                    abs(box_height - TARGET_GRAPHIC_HEIGHT) < DIMENSION_TOLERANCE
+                )
+
+                # Only add the box if it's NOT the target graphic
+                if not is_target_graphic:
+                    raw_boxes.append(scaled_box)
         
         if not raw_boxes:
             return []
@@ -71,13 +90,35 @@ def get_page_vector_boxes(pdf_path: str, page_index: int, dpi: int = 300, merge_
         filtered_boxes = []
         for box in clustered_boxes:
             x0, y0, x1, y1 = box
-            box_area = (x1 - x0) * (y1 - y0)
+            box_width = x1 - x0
+            box_height = y1 - y0
+            box_area = box_width * box_height
+            
+            # Apply max_area_ratio filter
             if box_area / scaled_page_area <= max_area_ratio:
                 filtered_boxes.append(box)
         
+        # Calculate effective target dimensions by subtracting padding from the user-provided target
+        effective_target_width = TARGET_GRAPHIC_WIDTH - (2 * padding)
+        effective_target_height = TARGET_GRAPHIC_HEIGHT - (2 * padding)
+
+        final_boxes_before_padding = []
+        for box in filtered_boxes:
+            x0, y0, x1, y1 = box
+            current_box_width = x1 - x0
+            current_box_height = y1 - y0
+
+            is_target_graphic_pre_padding = (
+                abs(current_box_width - effective_target_width) < DIMENSION_TOLERANCE and
+                abs(current_box_height - effective_target_height) < DIMENSION_TOLERANCE
+            )
+
+            if not is_target_graphic_pre_padding:
+                final_boxes_before_padding.append(box)
+
         # Apply padding to final filtered boxes
         padded_boxes = []
-        for x0, y0, x1, y1 in filtered_boxes:
+        for x0, y0, x1, y1 in final_boxes_before_padding: # Use the newly filtered list
             padded_box = (
                 max(0, x0 - padding),  # Ensure we don't go below 0
                 max(0, y0 - padding),  # Ensure we don't go below 0
@@ -88,7 +129,8 @@ def get_page_vector_boxes(pdf_path: str, page_index: int, dpi: int = 300, merge_
                 
         return padded_boxes
         
-    except Exception:
+    except Exception as e:
+        print(f"An error occurred in get_page_vector_boxes: {e}")
         return []
 
 
