@@ -55,13 +55,12 @@ The application window consists of four main areas:
   - `Ctrl + ↓` - Next PDF
 
 #### Page Navigation
-- **Buttons**: Use "Previous Page" and "Next Page" buttons
 - **Keyboard**:
   - `←` or `Page Up` - Previous page
   - `→` or `Page Down` - Next page
 
 #### Zoom Controls
-- **Buttons**: Use zoom buttons in the navigation bar
+- **Combined Zoom Button**: Split button with zoom out (left) and zoom in (right) functionality
 - **Keyboard**:
   - `Ctrl + +` - Zoom in
   - `Ctrl + -` - Zoom out
@@ -121,6 +120,8 @@ The application window consists of four main areas:
 | **Workflow** |
 | Accept Mask | `Enter` |
 | Delete Selected Mask | `Delete` or `Backspace` |
+| Merge Selected Masks | `M` |
+| Split Selected Mask | `S` |
 | Approve Current Page | `Ctrl + Enter` |
 | Accept All Pages in PDF | `Ctrl + Shift + Enter` |
 | Show Help | `F1` |

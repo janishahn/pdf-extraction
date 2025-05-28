@@ -94,6 +94,8 @@ class PageScene(QGraphicsScene):
     MODE_SELECT = 0
     MODE_DRAW = 1
 
+    GRID_SIZE = 20
+
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.current_pixmap_item: Optional[QGraphicsItem] = None
@@ -117,6 +119,9 @@ class PageScene(QGraphicsScene):
             self.current_pixmap_item = self.addPixmap(pixmap)
             self.setSceneRect(self.current_pixmap_item.boundingRect())
 
+            # Draw the grid after setting the scene rect
+            self.draw_grid()
+
             # Add existing masks from page state
             for mask_data in page_state.get("masks", []):
                 mask_item = EditableMaskItem(mask_data["id"], mask_data["points"])
@@ -132,6 +137,26 @@ class PageScene(QGraphicsScene):
         else:
             self.current_pixmap_item = None
             self.addText(f"Error rendering page {page_index + 1}")
+
+    def draw_grid(self) -> None:
+        """Draws a slightly opaque grid over the scene for orientation."""
+        if not self.sceneRect().isValid():
+            return
+
+        pen = QPen(QColor(100, 100, 100, 50))  # Light gray, 50 alpha (slightly opaque)
+        pen.setWidth(1)
+
+        # Draw vertical lines
+        x = self.sceneRect().left()
+        while x <= self.sceneRect().right():
+            self.addLine(x, self.sceneRect().top(), x, self.sceneRect().bottom(), pen)
+            x += self.GRID_SIZE
+
+        # Draw horizontal lines
+        y = self.sceneRect().top()
+        while y <= self.sceneRect().bottom():
+            self.addLine(self.sceneRect().left(), y, self.sceneRect().right(), y, pen)
+            y += self.GRID_SIZE
 
     def on_mask_geometry_changed(self, mask_id: str):
         if mask_id in self.current_masks:
@@ -173,10 +198,14 @@ class PageScene(QGraphicsScene):
             for item in self.items():
                 if isinstance(item, EditableMaskItem):
                     item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
+            if self.views():
+                self.views()[0].setCursor(Qt.CursorShape.ArrowCursor)
         elif self.mode == self.MODE_DRAW:
             for item in self.items():
                 if isinstance(item, EditableMaskItem):
                     item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
+            if self.views():
+                self.views()[0].setCursor(Qt.CursorShape.CrossCursor)
 
     def cancel_current_drawing(self):
         """Cancel the current drawing operation and remove any temporary rectangle."""
@@ -367,6 +396,8 @@ class HelpDialog(QDialog):
         <table border="1" style="border-collapse: collapse; width: 100%;">
         <tr><td><b>Accept Mask</b></td><td>Enter</td></tr>
         <tr><td><b>Delete Selected Mask</b></td><td>Delete or Backspace</td></tr>
+        <tr><td><b>Merge Selected Masks</b></td><td>M</td></tr>
+        <tr><td><b>Split Selected Mask</b></td><td>S</td></tr>
         </table>
 
         <h3>Approval Controls</h3>
@@ -378,13 +409,14 @@ class HelpDialog(QDialog):
         <h3>Application</h3>
         <table border="1" style="border-collapse: collapse; width: 100%;">
         <tr><td><b>Show Help</b></td><td>F1</td></tr>
+        <tr><td><b>Select All Masks</b></td><td>Ctrl + A</td></tr>
         </table>
 
         <h3>Usage Instructions</h3>
         <ul>
         <li><b>PDF Selection:</b> Click on any PDF in the left panel to view it</li>
-        <li><b>Page Navigation:</b> Use buttons or keyboard shortcuts to navigate pages</li>
-        <li><b>Zoom:</b> Use zoom controls or mouse wheel (with Ctrl) to zoom in/out</li>
+        <li><b>Page Navigation:</b> Use keyboard shortcuts (← → or Page Up/Down) to navigate pages</li>
+        <li><b>Zoom:</b> Use the combined zoom button or keyboard shortcuts to zoom in/out</li>
         <li><b>Creating Masks:</b> Click "Draw Rectangle Mask", then drag to draw a rectangle. Press Enter or use Accept/Cancel buttons to save or discard.</li>
         <li><b>Editing Masks:</b> Select masks to move them around the page</li>
         <li><b>State Persistence:</b> All navigation state is automatically saved</li>
@@ -398,6 +430,84 @@ class HelpDialog(QDialog):
         <li>Corrupted or encrypted PDFs are automatically skipped with warnings</li>
         </ul>
         """
+
+class CombinedZoomButton(QWidget):
+    """A combined zoom button with zoom in and zoom out functionality."""
+    
+    zoom_in_clicked = pyqtSignal()
+    zoom_out_clicked = pyqtSignal()
+    
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.init_ui()
+    
+    def init_ui(self):
+        """Initialize the combined zoom button UI."""
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        
+        # Zoom out button (left half)
+        self.zoom_out_btn = QPushButton()
+        self.zoom_out_btn.clicked.connect(self.zoom_out_clicked.emit)
+        self.zoom_out_btn.setToolTip("Zoom Out")
+        
+        # Zoom in button (right half)
+        self.zoom_in_btn = QPushButton()
+        self.zoom_in_btn.clicked.connect(self.zoom_in_clicked.emit)
+        self.zoom_in_btn.setToolTip("Zoom In")
+        
+        # Try to use standard icons, fallback to text
+        try:
+            style = self.style()
+            # Use proper zoom icons from the standard set
+            self.zoom_out_btn.setText("−")
+            self.zoom_in_btn.setText("+")
+        except:
+            pass # Fallback to text is now the primary method, no specific error handling needed
+        
+        # Style the buttons to look like a single split button
+        button_style = """
+            QPushButton {
+                border: 1px solid #888;
+                background-color: #f0f0f0;
+                padding: 2px 6px;
+                font-size: 16px;
+                color: #333;
+                min-width: 30px;
+                min-height: 16px;
+            }
+            QPushButton:hover {
+                background-color: #e0e0e0;
+            }
+            QPushButton:pressed {
+                background-color: #d0d0d0;
+            }
+        """
+        
+        # Left button (zoom out) - rounded left corners only
+        zoom_out_style = button_style + """
+            QPushButton {
+                border-top-left-radius: 4px;
+                border-bottom-left-radius: 4px;
+                border-right: 0.5px solid #666;
+            }
+        """
+        
+        # Right button (zoom in) - rounded right corners only  
+        zoom_in_style = button_style + """
+            QPushButton {
+                border-top-right-radius: 4px;
+                border-bottom-right-radius: 4px;
+                border-left: 0.5px solid #666;
+            }
+        """
+        
+        self.zoom_out_btn.setStyleSheet(zoom_out_style)
+        self.zoom_in_btn.setStyleSheet(zoom_in_style)
+        
+        layout.addWidget(self.zoom_out_btn)
+        layout.addWidget(self.zoom_in_btn)
 
 class MainWindow(QMainWindow):
     """Main application window for PDF image extraction tool.
@@ -484,15 +594,12 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.page_info_label)
 
         nav_layout = QHBoxLayout()
-        self.prev_page_btn = QPushButton("Previous Page")
-        self.prev_page_btn.clicked.connect(self.prev_page)
-        self.next_page_btn = QPushButton("Next Page")
-        self.next_page_btn.clicked.connect(self.next_page)
-
-        self.zoom_in_btn = QPushButton("Zoom In")
-        self.zoom_in_btn.clicked.connect(self.zoom_in)
-        self.zoom_out_btn = QPushButton("Zoom Out")
-        self.zoom_out_btn.clicked.connect(self.zoom_out)
+        
+        # Create combined zoom button
+        self.combined_zoom_btn = CombinedZoomButton()
+        self.combined_zoom_btn.zoom_in_clicked.connect(self.zoom_in)
+        self.combined_zoom_btn.zoom_out_clicked.connect(self.zoom_out)
+        
         self.fit_to_view_btn = QPushButton("Fit to View")
         self.fit_to_view_btn.clicked.connect(self.fit_to_view)
         self.fit_to_width_btn = QPushButton("Fit to Width")
@@ -501,13 +608,20 @@ class MainWindow(QMainWindow):
         self.recompute_masks_btn = QPushButton("Recompute Masks")
         self.recompute_masks_btn.clicked.connect(self.recompute_all_masks)
 
-        nav_layout.addWidget(self.prev_page_btn)
-        nav_layout.addWidget(self.next_page_btn)
-        nav_layout.addWidget(self.zoom_out_btn)
-        nav_layout.addWidget(self.zoom_in_btn)
+        self.merge_masks_btn = QPushButton("Merge Selected Masks")
+        self.merge_masks_btn.clicked.connect(self.merge_selected_masks)
+        self.merge_masks_btn.setEnabled(False) # Initially disabled
+
+        self.split_mask_btn = QPushButton("Split Selected Mask")
+        self.split_mask_btn.clicked.connect(self.split_selected_mask)
+        self.split_mask_btn.setEnabled(False) # Initially disabled
+
+        nav_layout.addWidget(self.combined_zoom_btn)
         nav_layout.addWidget(self.fit_to_view_btn)
         nav_layout.addWidget(self.fit_to_width_btn)
         nav_layout.addWidget(self.recompute_masks_btn)
+        nav_layout.addWidget(self.merge_masks_btn)
+        nav_layout.addWidget(self.split_mask_btn)
         nav_layout.addStretch()
 
         layout.addLayout(nav_layout)
@@ -602,6 +716,20 @@ class MainWindow(QMainWindow):
         delete_mask_action.triggered.connect(self.delete_selected_mask_from_scene)
         toolbar.addAction(delete_mask_action)
 
+        self.merge_masks_action = QAction("Merge Selected Masks", self)
+        self.merge_masks_action.triggered.connect(self.merge_selected_masks)
+        self.merge_masks_action.setEnabled(False) # Initially disabled
+        toolbar.addAction(self.merge_masks_action)
+
+        self.split_mask_action = QAction("Split Selected Mask", self)
+        self.split_mask_action.triggered.connect(self.split_selected_mask)
+        self.split_mask_action.setEnabled(False) # Initially disabled
+        toolbar.addAction(self.split_mask_action)
+
+        self.select_all_action = QAction("Select All Masks", self)
+        self.select_all_action.triggered.connect(self.select_all_masks)
+        toolbar.addAction(self.select_all_action)
+
     def create_status_bar(self):
         """Create the status bar."""
         self.status_bar = QStatusBar()
@@ -657,13 +785,27 @@ class MainWindow(QMainWindow):
 
         QShortcut(QKeySequence("Return"), self, self.handle_enter_key)
         QShortcut(QKeySequence("Enter"), self, self.handle_enter_key)
+        QShortcut(QKeySequence("Space"), self, self.handle_enter_key) # Accept mask with Spacebar
+        QShortcut(QKeySequence("Escape"), self, self.handle_escape_key) # Discard mask with Escape
         QShortcut(QKeySequence("Delete"), self, self.handle_delete_key)
         QShortcut(QKeySequence("Backspace"), self, self.handle_delete_key)
+        QShortcut(QKeySequence("M"), self, self.merge_selected_masks) # Shortcut for merging
+        QShortcut(QKeySequence("S"), self, self.split_selected_mask) # New shortcut for splitting
+        QShortcut(QKeySequence("Ctrl+A"), self, self.select_all_masks) # Select all masks
 
     def handle_enter_key(self):
-        """Handle Enter key press - accept rectangle if controls are visible."""
+        """
+        Handle Enter or Space key press - accept rectangle if controls are visible.
+        """
         if self.rectangle_controls_widget.isVisible() and self.page_scene.has_pending_rectangle():
             self.accept_rectangle()
+
+    def handle_escape_key(self):
+        """
+        Handle Escape key press - discard the currently drawn rectangle if controls are visible.
+        """
+        if self.rectangle_controls_widget.isVisible() and self.page_scene.has_pending_rectangle():
+            self.cancel_rectangle()
 
     def handle_delete_key(self):
         """Handle Delete/Backspace key press - delete selected masks."""
@@ -835,9 +977,6 @@ class MainWindow(QMainWindow):
             self.page_scene.blockSignals(False)
             self.mask_list_widget.blockSignals(False)
 
-        self.prev_page_btn.setEnabled(self.current_page_index > 0)
-        self.next_page_btn.setEnabled(self.current_page_index < state["page_count"] - 1)
-        
         # Apply zoom only if user hasn't set a preference, or preserve their preference
         self.apply_zoom_preference()
 
@@ -1061,12 +1200,6 @@ class MainWindow(QMainWindow):
             self.update_pdf_list_item(self.current_pdf_index)
             self.update_display()
 
-            QMessageBox.information(
-                self,
-                "Success",
-                f"All {total_pages} pages in {os.path.basename(pdf_path)} have been accepted."
-            )
-
     def on_mask_selected_in_scene(self, mask_id: str):
         """Handle mask selection from the scene and update list selection."""
         self.mask_list_widget.blockSignals(True)
@@ -1074,6 +1207,7 @@ class MainWindow(QMainWindow):
         if mask_id == "": # No mask selected, clear all selections
             self.mask_list_widget.clearSelection()
             self.status_bar.showMessage("No mask selected", 3000)
+            selected_count = 0 # No masks selected
         else:
             # Get all currently selected items in the scene
             selected_scene_items = self.page_scene.selectedItems()
@@ -1081,6 +1215,7 @@ class MainWindow(QMainWindow):
             for item in selected_scene_items:
                 if isinstance(item, EditableMaskItem):
                     selected_mask_ids.append(item.mask_id)
+            selected_count = len(selected_mask_ids)
 
             self.mask_list_widget.clearSelection()
 
@@ -1095,7 +1230,7 @@ class MainWindow(QMainWindow):
                         self.mask_list_widget.scrollToItem(item)
 
             # Update status bar based on number of selections
-            if len(selected_mask_ids) == 1:
+            if selected_count == 1:
                 if mask_id in self.page_scene.current_masks:
                     mask_item = self.page_scene.current_masks[mask_id]
                     rect = mask_item.rect()
@@ -1106,8 +1241,16 @@ class MainWindow(QMainWindow):
                     )
                 else:
                     self.status_bar.showMessage(f"Selected mask: {mask_id[:8]}...")
-            elif len(selected_mask_ids) > 1:
-                self.status_bar.showMessage(f"Selected {len(selected_mask_ids)} masks")
+            elif selected_count > 1:
+                self.status_bar.showMessage(f"Selected {selected_count} masks")
+        
+        can_merge = selected_count >= 2
+        self.merge_masks_btn.setEnabled(can_merge)
+        self.merge_masks_action.setEnabled(can_merge)
+
+        can_split = selected_count == 1
+        self.split_mask_btn.setEnabled(can_split)
+        self.split_mask_action.setEnabled(can_split)
 
         self.mask_list_widget.blockSignals(False)
 
@@ -1117,6 +1260,10 @@ class MainWindow(QMainWindow):
         if not selected_list_items:
             self.page_scene.clearSelection()
             self.status_bar.showMessage("No mask selected", 3000)
+            self.merge_masks_btn.setEnabled(False)
+            self.merge_masks_action.setEnabled(False)
+            self.split_mask_btn.setEnabled(False)
+            self.split_mask_action.setEnabled(False)
             return
 
         selected_mask_ids = [item.data(Qt.ItemDataRole.UserRole) for item in selected_list_items]
@@ -1147,6 +1294,14 @@ class MainWindow(QMainWindow):
                 self.status_bar.showMessage(f"Selected mask: {mask_id[:8]}...")
         elif selected_count > 1:
             self.status_bar.showMessage(f"Selected {selected_count} masks")
+
+        can_merge = selected_count >= 2
+        self.merge_masks_btn.setEnabled(can_merge)
+        self.merge_masks_action.setEnabled(can_merge)
+
+        can_split = selected_count == 1
+        self.split_mask_btn.setEnabled(can_split)
+        self.split_mask_action.setEnabled(can_split)
 
         # Ensure the first selected mask is visible
         if selected_count > 0 and selected_mask_ids[0] in self.page_scene.current_masks:
@@ -1232,35 +1387,153 @@ class MainWindow(QMainWindow):
         pdf_path, state = self.pdf_states[self.current_pdf_index]
         pdf_filename = os.path.basename(pdf_path)
 
+        self.status_bar.showMessage(f"Recomputing masks for {pdf_filename}...", 0) # 0 means stay until new message
+
+        total_pages = state["page_count"]
+        for page_num in range(1, total_pages + 1):
+            page_key = str(page_num)
+            
+            # Clear existing masks for the page
+            if page_key not in state["pages"]:
+                storage.ensure_page_exists(state, page_num)
+            state["pages"][page_key]["masks"] = []
+
+            # Recompute and add new masks
+            vector_boxes = vector_bbox.get_page_vector_boxes(pdf_path, page_num - 1, dpi=300)
+            for x0, y0, x1, y1 in vector_boxes:
+                points = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+                storage.add_mask_to_page(state, page_num, points)
+        
+        storage.save_state(pdf_path, state)
+        self.update_display()
+        self.status_bar.showMessage(f"Successfully recomputed masks for {pdf_filename}.", 5000)
+
+    def merge_selected_masks(self):
+        """
+        Merges all currently selected masks into a single new mask that encompasses their combined area.
+        The original selected masks are then deleted.
+        """
+        selected_items = self.page_scene.selectedItems()
+        masks_to_merge = [item for item in selected_items if isinstance(item, EditableMaskItem)]
+
+        if len(masks_to_merge) < 2:
+            self.status_bar.showMessage("Select at least two masks to merge.", 3000)
+            return
+
         confirm = QMessageBox.question(
             self,
-            "Recompute All Masks",
-            f"Are you sure you want to recompute all masks for ALL pages in '{pdf_filename}'?\n\n"
-            "This will discard all existing masks for this PDF and generate new ones automatically.",
+            "Merge Masks",
+            f"Are you sure you want to merge {len(masks_to_merge)} selected masks into one?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No
         )
 
         if confirm == QMessageBox.StandardButton.Yes:
-            self.status_bar.showMessage(f"Recomputing masks for {pdf_filename}...", 0) # 0 means stay until new message
+            # Calculate combined bounding box
+            min_x = float('inf')
+            min_y = float('inf')
+            max_x = float('-inf')
+            max_y = float('-inf')
 
-            total_pages = state["page_count"]
-            for page_num in range(1, total_pages + 1):
-                page_key = str(page_num)
-                
-                # Clear existing masks for the page
-                if page_key not in state["pages"]:
-                    storage.ensure_page_exists(state, page_num)
-                state["pages"][page_key]["masks"] = []
+            for mask_item in masks_to_merge:
+                # Use sceneBoundingRect to get coordinates in the scene's coordinate system
+                rect = mask_item.sceneBoundingRect()
+                min_x = min(min_x, rect.left())
+                min_y = min(min_y, rect.top())
+                max_x = max(max_x, rect.right())
+                max_y = max(max_y, rect.bottom())
 
-                # Recompute and add new masks
-                vector_boxes = vector_bbox.get_page_vector_boxes(pdf_path, page_num - 1, dpi=300)
-                for x0, y0, x1, y1 in vector_boxes:
-                    points = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
-                    storage.add_mask_to_page(state, page_num, points)
-            
+            new_mask_points = [
+                [min_x, min_y],
+                [max_x, min_y],
+                [max_x, max_y],
+                [min_x, max_y]
+            ]
+
+            # Delete original masks
+            for mask_item in masks_to_merge:
+                self.delete_mask_by_id(mask_item.mask_id)
+
+            # Create new merged mask
+            pdf_path, state = self.pdf_states[self.current_pdf_index]
+            page_num = self.current_page_index + 1
+            storage.add_mask_to_page(state, page_num, new_mask_points)
             storage.save_state(pdf_path, state)
+
             self.update_display()
-            self.status_bar.showMessage(f"Successfully recomputed masks for {pdf_filename}.", 5000)
+            self.status_bar.showMessage(f"Successfully merged {len(masks_to_merge)} masks.", 3000)
         else:
-            self.status_bar.showMessage("Mask recomputation cancelled.", 3000)
+            self.status_bar.showMessage("Mask merge cancelled.", 3000)
+
+    def split_selected_mask(self):
+        """
+        Splits the currently selected mask into two new masks based on its largest dimension.
+        The original selected mask is then deleted.
+        """
+        selected_items = self.page_scene.selectedItems()
+        
+        if len(selected_items) != 1:
+            self.status_bar.showMessage("Select exactly one mask to split.", 3000)
+            return
+
+        mask_to_split = selected_items[0]
+        if not isinstance(mask_to_split, EditableMaskItem):
+            self.status_bar.showMessage("Selected item is not a mask.", 3000)
+            return
+
+        rect = mask_to_split.sceneBoundingRect()
+        x0, y0, x1, y1 = rect.left(), rect.top(), rect.right(), rect.bottom()
+        width = x1 - x0
+        height = y1 - y0
+
+        new_mask_points_1 = []
+        new_mask_points_2 = []
+
+        if width > height: # Split horizontally
+            mid_x = x0 + width / 2
+            new_mask_points_1 = [
+                [x0, y0], [mid_x, y0], [mid_x, y1], [x0, y1]
+            ]
+            new_mask_points_2 = [
+                [mid_x, y0], [x1, y0], [x1, y1], [mid_x, y1]
+            ]
+        else: # Split vertically
+            mid_y = y0 + height / 2
+            new_mask_points_1 = [
+                [x0, y0], [x1, y0], [x1, mid_y], [x0, mid_y]
+            ]
+            new_mask_points_2 = [
+                [x0, mid_y], [x1, mid_y], [x1, y1], [x0, y1]
+            ]
+        
+        # Delete original mask
+        self.delete_mask_by_id(mask_to_split.mask_id)
+
+        # Create new split masks
+        pdf_path, state = self.pdf_states[self.current_pdf_index]
+        page_num = self.current_page_index + 1
+        
+        storage.add_mask_to_page(state, page_num, new_mask_points_1)
+        storage.add_mask_to_page(state, page_num, new_mask_points_2)
+        storage.save_state(pdf_path, state)
+
+        self.update_display()
+        self.status_bar.showMessage("Mask split successfully into two new masks.", 3000)
+
+    def select_all_masks(self):
+        """Selects all masks on the current page."""
+        if not self.page_scene:
+            return
+
+        self.page_scene.blockSignals(True) # Block signals to prevent multiple updates during selection
+        self.page_scene.clearSelection() # Clear existing selection first
+
+        selected_count = 0
+        for item in self.page_scene.items():
+            if isinstance(item, EditableMaskItem):
+                item.setSelected(True)
+                selected_count += 1
+        
+        self.page_scene.blockSignals(False)
+        self.on_mask_selected_in_scene("") # Trigger update to sync list and status bar
+        self.status_bar.showMessage(f"Selected {selected_count} masks.", 3000)

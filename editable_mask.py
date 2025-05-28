@@ -1,5 +1,5 @@
 from typing import List, Tuple, Dict, Any, Optional
-from PyQt6.QtWidgets import QGraphicsRectItem, QGraphicsItem, QGraphicsEllipseItem
+from PyQt6.QtWidgets import QGraphicsRectItem, QGraphicsItem, QGraphicsEllipseItem, QGraphicsView
 from PyQt6.QtCore import Qt, pyqtSignal, QPointF, QRectF
 from PyQt6.QtGui import QPen, QBrush, QColor, QCursor
 
@@ -28,6 +28,7 @@ class EdgeHandle(QGraphicsEllipseItem):
             return QCursor(Qt.CursorShape.SizeHorCursor)
         return QCursor(Qt.CursorShape.ArrowCursor)
     
+
     def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value: Any) -> Any:
         if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange:
             new_pos = value
