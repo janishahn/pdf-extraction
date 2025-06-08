@@ -4,6 +4,7 @@ import export
 from export import check_all_pages_approved
 import vector_bbox
 from editable_mask import EditableMaskItem
+from shapely.geometry import Polygon, box, LineString
 
 try:
     import fitz  # PyMuPDF
@@ -91,6 +92,7 @@ class PageScene(QGraphicsScene):
     mask_deleted = pyqtSignal(str)
     mask_selected = pyqtSignal(str)  # Signal emitted when a mask is selected in the scene
     rectangle_drawn = pyqtSignal(QRectF) # New signal for drawn rectangles
+    eraser_rectangle = pyqtSignal(QRectF)  # New signal for eraser rectangles
 
     MODE_SELECT = 0
     MODE_DRAW = 1
@@ -105,6 +107,7 @@ class PageScene(QGraphicsScene):
         self.is_drawing_rectangle = False
         self.rectangle_start_point: Optional[QPointF] = None
         self.temp_rectangle_item: Optional[QGraphicsRectItem] = None
+        self.is_erasing_draw = False  # Track if current rectangle is eraser
 
     def load_page(self, pdf_path: str, page_index: int, page_state: Dict[str, Any]):
         """Load and render a PDF page and its masks."""
@@ -125,7 +128,11 @@ class PageScene(QGraphicsScene):
 
             # Add existing masks from page state
             for mask_data in page_state.get("masks", []):
-                mask_item = EditableMaskItem(mask_data["id"], mask_data["points"])
+                points = mask_data["points"]
+                if len(points) != 4:
+                    mask_item = MaskItem(mask_data["id"], points)
+                else:
+                    mask_item = EditableMaskItem(mask_data["id"], points)
                 self.addItem(mask_item)
                 self.current_masks[mask_data["id"]] = mask_item
 
@@ -212,6 +219,7 @@ class PageScene(QGraphicsScene):
         """Cancel the current drawing operation and remove any temporary rectangle."""
         self.is_drawing_rectangle = False
         self.rectangle_start_point = None
+        self.is_erasing_draw = False  # Reset eraser mode
         if self.temp_rectangle_item:
             if self.temp_rectangle_item.scene() is not None:
                 self.temp_rectangle_item.scene().removeItem(self.temp_rectangle_item)
@@ -219,9 +227,8 @@ class PageScene(QGraphicsScene):
 
     def mousePressEvent(self, event) -> None:
         if self.mode == self.MODE_DRAW and event.button() == Qt.MouseButton.LeftButton:
-            # Discard any existing temporary rectangle first
             self.cancel_current_drawing()
-
+            self.is_erasing_draw = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
             self.is_drawing_rectangle = True
             self.rectangle_start_point = event.scenePos()
 
@@ -270,12 +277,6 @@ class PageScene(QGraphicsScene):
         """Accept the currently drawn rectangle as a mask."""
         if self.temp_rectangle_item:
             rect = self.temp_rectangle_item.rect()
-            points = [
-                [rect.left(), rect.top()],
-                [rect.right(), rect.top()],
-                [rect.right(), rect.bottom()],
-                [rect.left(), rect.bottom()]
-            ]
 
             # Clean up safely
             if self.temp_rectangle_item.scene() is not None:
@@ -284,9 +285,19 @@ class PageScene(QGraphicsScene):
             self.is_drawing_rectangle = False
             self.rectangle_start_point = None
 
-            # Create the mask
-            self.mask_created.emit(points)
-            # The mode is now controlled by MainWindow based on continuous draw mode
+            if self.is_erasing_draw:
+                # Emit eraser rectangle signal for erasing masks
+                self.eraser_rectangle.emit(rect)
+                self.is_erasing_draw = False
+            else:
+                # Create the mask
+                points = [
+                    [rect.left(), rect.top()],
+                    [rect.right(), rect.top()],
+                    [rect.right(), rect.bottom()],
+                    [rect.left(), rect.bottom()]
+                ]
+                self.mask_created.emit(points)
 
     def has_pending_rectangle(self) -> bool:
         """Check if there's a rectangle waiting to be accepted."""
@@ -734,6 +745,7 @@ class MainWindow(QMainWindow):
         self.page_scene.mask_modified.connect(self.on_mask_modified)
         self.page_scene.mask_selected.connect(self.on_mask_selected_in_scene)
         self.page_scene.rectangle_drawn.connect(self.on_rectangle_drawn)
+        self.page_scene.eraser_rectangle.connect(self.on_eraser_rectangle)
 
         parent.addWidget(viewer_widget)
 
@@ -813,6 +825,10 @@ class MainWindow(QMainWindow):
         self.expand_mask_action.setEnabled(False) # Initially disabled
         toolbar.addAction(self.expand_mask_action)
 
+        self.add_mask_action = QAction("Add Selected Masks", self)
+        self.add_mask_action.triggered.connect(self.add_selected_masks)
+        toolbar.addAction(self.add_mask_action)
+
     def create_status_bar(self):
         """Create the status bar."""
         self.status_bar = QStatusBar()
@@ -876,6 +892,7 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("S"), self, self.split_selected_mask) # New shortcut for splitting
         QShortcut(QKeySequence("Ctrl+A"), self, self.select_all_masks) # Select all masks
         QShortcut(QKeySequence("E"), self, self.expand_selected_mask) # New shortcut for expanding mask
+        QShortcut(QKeySequence("A"), self, self.add_selected_masks) # Shortcut for add-to-mask
 
     def handle_enter_key(self):
         """
@@ -893,25 +910,15 @@ class MainWindow(QMainWindow):
 
     def handle_delete_key(self):
         """Handle Delete/Backspace key press - delete selected masks."""
-        # Check scene selection first
         selected_scene_items = self.page_scene.selectedItems()
-        editable_mask_items = [item for item in selected_scene_items if isinstance(item, EditableMaskItem)]
-        
-        if editable_mask_items:
-            mask_ids_to_delete = [item.mask_id for item in editable_mask_items]
-            for mask_id in mask_ids_to_delete:
-                self.delete_mask_by_id(mask_id)
+        mask_items = [item for item in selected_scene_items if isinstance(item, (EditableMaskItem, MaskItem))]
+        if mask_items:
+            for item in mask_items:
+                self.delete_mask_by_id(item.mask_id)
             return
-        
-        # Check list selection
-        selected_list_items = self.mask_list_widget.selectedItems()
-        if selected_list_items:
-            mask_ids_to_delete = [item.data(Qt.ItemDataRole.UserRole) for item in selected_list_items]
-            for mask_id in mask_ids_to_delete:
-                self.delete_mask_by_id(mask_id)
-            return
-        
-        self.status_bar.showMessage("No mask selected to delete.", 3000)
+
+        # Otherwise delete from the list selection
+        self.delete_selected_mask_from_list()
 
     def showEvent(self, event):
         """Override showEvent to ensure default zoom is applied on first show."""
@@ -1169,7 +1176,7 @@ class MainWindow(QMainWindow):
         # Collect all mask IDs to delete
         mask_ids_to_delete = []
         for item in selected_items:
-            if isinstance(item, EditableMaskItem):
+            if isinstance(item, (EditableMaskItem, MaskItem)):
                 mask_ids_to_delete.append(item.mask_id)
         
         # Delete all selected masks
@@ -1360,7 +1367,10 @@ class MainWindow(QMainWindow):
         # Update status bar and properties dock based on number of selections
         if selected_count == 1:
             if selected_mask_item:
-                rect = selected_mask_item.rect()
+                if hasattr(selected_mask_item, 'rect'):
+                    rect = selected_mask_item.rect()
+                else:
+                    rect = selected_mask_item.sceneBoundingRect()
                 width = round(rect.width())
                 height = round(rect.height())
                 self.status_bar.showMessage(
@@ -1724,3 +1734,122 @@ class MainWindow(QMainWindow):
         self.page_scene.blockSignals(False)
         self.on_mask_selected_in_scene("") # Trigger update to sync list and status bar
         self.status_bar.showMessage(f"Selected {selected_count} masks.", 3000)
+
+    def on_eraser_rectangle(self, rect: QRectF):
+        """Handle eraser rectangle by removing intersecting mask areas as a single polygon."""
+        pdf_path, state = self.pdf_states[self.current_pdf_index]
+        page_num = self.current_page_index + 1
+        modified = False
+        for mask_id, mask_item in list(self.page_scene.current_masks.items()):
+            pts = mask_item.get_points()
+            mask_poly = Polygon(pts)
+            eraser_poly = box(rect.left(), rect.top(), rect.right(), rect.bottom())
+            diff = mask_poly.difference(eraser_poly)
+            if not diff.is_empty and diff.geom_type == 'Polygon':
+                # Remove the old mask
+                storage.remove_mask_from_page(state, page_num, mask_id)
+                if mask_item.scene() is not None:
+                    self.page_scene.removeItem(mask_item)
+                del self.page_scene.current_masks[mask_id]
+                # Add the new mask as a single polygon
+                new_points = list(diff.exterior.coords)
+                # Remove duplicate last point if present
+                if len(new_points) > 1 and new_points[0] == new_points[-1]:
+                    new_points = new_points[:-1]
+                new_id = storage.add_mask_to_page(state, page_num, new_points)
+                new_item = MaskItem(new_id, new_points)
+                self.page_scene.addItem(new_item)
+                self.page_scene.current_masks[new_id] = new_item
+                modified = True
+            elif not diff.is_empty and diff.geom_type == 'MultiPolygon':
+                # If the result is a MultiPolygon, keep only the largest piece
+                largest = max(diff.geoms, key=lambda g: g.area)
+                new_points = list(largest.exterior.coords)
+                if len(new_points) > 1 and new_points[0] == new_points[-1]:
+                    new_points = new_points[:-1]
+                storage.remove_mask_from_page(state, page_num, mask_id)
+                if mask_item.scene() is not None:
+                    self.page_scene.removeItem(mask_item)
+                del self.page_scene.current_masks[mask_id]
+                new_id = storage.add_mask_to_page(state, page_num, new_points)
+                new_item = MaskItem(new_id, new_points)
+                self.page_scene.addItem(new_item)
+                self.page_scene.current_masks[new_id] = new_item
+                modified = True
+            elif mask_poly.intersects(eraser_poly):
+                # If the mask is completely erased, just remove it
+                storage.remove_mask_from_page(state, page_num, mask_id)
+                if mask_item.scene() is not None:
+                    self.page_scene.removeItem(mask_item)
+                del self.page_scene.current_masks[mask_id]
+                modified = True
+        if modified:
+            storage.save_state(pdf_path, state)
+            self.update_mask_list()
+            self.status_bar.showMessage("Eraser applied successfully.", 3000)
+        else:
+            self.status_bar.showMessage("No mask intersects eraser rectangle.", 3000)
+
+    def add_selected_masks(self):
+        """Add one mask to another, connecting with a Manhattan step if needed."""
+        selected_items = self.page_scene.selectedItems()
+        mask_items = [item for item in selected_items if isinstance(item, (EditableMaskItem, MaskItem))]
+        if len(mask_items) != 2:
+            self.status_bar.showMessage("Select exactly two masks to add.", 3000)
+            return
+        mask1, mask2 = mask_items
+        poly1 = Polygon(mask1.get_points())
+        poly2 = Polygon(mask2.get_points())
+        if poly1.intersects(poly2) or poly1.touches(poly2):
+            union = poly1.union(poly2)
+        else:
+            # Connect masks with a full-size Manhattan bridge
+            # Compute bounding boxes
+            b1_minx, b1_miny, b1_maxx, b1_maxy = poly1.bounds
+            b2_minx, b2_miny, b2_maxx, b2_maxy = poly2.bounds
+            # Calculate positive gaps
+            gap_x = max(0, b2_minx - b1_maxx, b1_minx - b2_maxx)
+            gap_y = max(0, b2_miny - b1_maxy, b1_miny - b2_maxy)
+            if gap_x >= gap_y:
+                # Horizontal connector with height of smaller mask
+                h1 = b1_maxy - b1_miny
+                h2 = b2_maxy - b2_miny
+                small_miny, small_maxy = (b1_miny, b1_maxy) if h1 < h2 else (b2_miny, b2_maxy)
+                # Determine left/right extents
+                if b1_maxx < b2_minx:
+                    x0, x1 = b1_maxx, b2_minx
+                else:
+                    x0, x1 = b2_maxx, b1_minx
+                connector = box(x0, small_miny, x1, small_maxy)
+            else:
+                # Vertical connector with width of smaller mask
+                w1 = b1_maxx - b1_minx
+                w2 = b2_maxx - b2_minx
+                small_minx, small_maxx = (b1_minx, b1_maxx) if w1 < w2 else (b2_minx, b2_maxx)
+                # Determine top/bottom extents
+                if b1_maxy < b2_miny:
+                    y0, y1 = b1_maxy, b2_miny
+                else:
+                    y0, y1 = b2_maxy, b1_miny
+                connector = box(small_minx, y0, small_maxx, y1)
+            # Merge with connector
+            union = poly1.union(poly2).union(connector)
+        # Only keep the largest polygon if union is multipolygon
+        if union.geom_type == 'MultiPolygon':
+            union = max(union.geoms, key=lambda g: g.area)
+        new_points = list(union.exterior.coords)
+        if len(new_points) > 1 and new_points[0] == new_points[-1]:
+            new_points = new_points[:-1]
+        # Remove old masks
+        for item in mask_items:
+            self.delete_mask_by_id(item.mask_id)
+        # Add new mask
+        pdf_path, state = self.pdf_states[self.current_pdf_index]
+        page_num = self.current_page_index + 1
+        new_id = storage.add_mask_to_page(state, page_num, new_points)
+        new_item = MaskItem(new_id, new_points)
+        self.page_scene.addItem(new_item)
+        self.page_scene.current_masks[new_id] = new_item
+        storage.save_state(pdf_path, state)
+        self.update_mask_list()
+        self.status_bar.showMessage("Masks added successfully.", 3000)

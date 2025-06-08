@@ -1,3 +1,4 @@
 PyMuPDF>=1.23.0
 PyQt6>=6.0.0
 Pillow>=9.0.0
+Shapely>=2.0.0
