@@ -1,6 +1,43 @@
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Any
 import fitz
 
+
+def _get_item_bbox(item: Any) -> Optional[fitz.Rect]: # Changed type hint to Any
+    """
+    Calculates the bounding box for a single drawing item.
+    """
+    if not isinstance(item, dict): # Added type check
+        return None
+
+    if item.get('type') == 'line':
+        p1 = fitz.Point(item['p1'])
+        p2 = fitz.Point(item['p2'])
+        return fitz.Rect(p1, p2).normalize()
+    elif item.get('type') == 'curve':
+        p1 = fitz.Point(item['p1'])
+        p2 = fitz.Point(item['p2'])
+        p3 = fitz.Point(item['p3'])
+        p4 = fitz.Point(item['p4'])
+        # For curves, we can get a rough bounding box from control points
+        # A more accurate bbox would require evaluating the Bezier curve
+        return fitz.Rect(p1, p2, p3, p4).normalize()
+    elif item.get('type') == 'rect':
+        return fitz.Rect(item['rect']).normalize()
+    elif item.get('type') == 'circle':
+        # Circles are often represented by a center and radius, or an enclosing rect
+        # Assuming 'rect' key for circle's bounding box if available, otherwise calculate
+        if 'rect' in item:
+            return fitz.Rect(item['rect']).normalize()
+        # Fallback if only center/radius is given (though fitz usually provides rect)
+        center = fitz.Point(item['center'])
+        radius = item['radius']
+        return fitz.Rect(center.x - radius, center.y - radius, center.x + radius, center.y + radius).normalize()
+    elif item.get('type') == 'image':
+        # Images usually have a 'rect' key
+        if 'rect' in item:
+            return fitz.Rect(item['rect']).normalize()
+    # Add other types as needed (e.g., 'text' if it appears in drawings, though usually separate)
+    return None
 
 def get_page_vector_boxes(pdf_path: str, page_index: int, dpi: int = 300, merge_tolerance: float = 10.0, max_area_ratio: float = 0.8, padding: float = 6.0) -> List[Tuple[float, float, float, float]]:
     """
@@ -54,29 +91,52 @@ def get_page_vector_boxes(pdf_path: str, page_index: int, dpi: int = 300, merge_
             
         raw_boxes = []
         for drawing in drawings:
+            # Ensure the drawing is a dictionary before trying to access its keys
+            if not isinstance(drawing, dict):
+                continue
+
+            # Process 'rect' directly if it exists at the top level of the drawing
             if 'rect' in drawing:
                 rect = drawing['rect']
-                # Scale coordinates to match rendered DPI
                 scaled_box = (
                     rect.x0 * scale_factor,
                     rect.y0 * scale_factor,
                     rect.x1 * scale_factor,
                     rect.y1 * scale_factor
                 )
-                
-                # Calculate dimensions of the scaled box
+                # Apply filtering for target graphic
                 box_width = scaled_box[2] - scaled_box[0]
                 box_height = scaled_box[3] - scaled_box[1]
-
-                # Check if the box matches the target dimensions for the recurring graphic
                 is_target_graphic = (
                     abs(box_width - TARGET_GRAPHIC_WIDTH) < DIMENSION_TOLERANCE and
                     abs(box_height - TARGET_GRAPHIC_HEIGHT) < DIMENSION_TOLERANCE
                 )
-
-                # Only add the box if it's NOT the target graphic
                 if not is_target_graphic:
                     raw_boxes.append(scaled_box)
+            
+            # Process individual items within the drawing (e.g., lines, curves, other shapes)
+            if 'items' in drawing:
+                for item in drawing['items']:
+                    # Ensure the item is a dictionary before passing to _get_item_bbox
+                    if not isinstance(item, dict): # Added type check
+                        continue
+                    item_bbox = _get_item_bbox(item)
+                    if item_bbox:
+                        scaled_box = (
+                            item_bbox.x0 * scale_factor,
+                            item_bbox.y0 * scale_factor,
+                            item_bbox.x1 * scale_factor,
+                            item_bbox.y1 * scale_factor
+                        )
+                        # Apply filtering for target graphic to individual items as well
+                        box_width = scaled_box[2] - scaled_box[0]
+                        box_height = scaled_box[3] - scaled_box[1]
+                        is_target_graphic = (
+                            abs(box_width - TARGET_GRAPHIC_WIDTH) < DIMENSION_TOLERANCE and
+                            abs(box_height - TARGET_GRAPHIC_HEIGHT) < DIMENSION_TOLERANCE
+                        )
+                        if not is_target_graphic:
+                            raw_boxes.append(scaled_box)
         
         if not raw_boxes:
             return []

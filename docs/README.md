@@ -73,7 +73,7 @@ The application window consists of four main areas:
 1. Click "Draw Rectangle Mask" in the toolbar.
 2. Click and drag on the PDF page to draw a rectangle.
 3. Release the mouse button to complete the rectangle.
-4. Click "Accept Mask" to save it, or "Cancel" to discard.
+4. Press **Enter** or **Space** to accept the mask, or **Escape** to discard it.
 5. Masks can also be automatically generated using the "Recompute Masks" button.
 
 #### Editing Masks

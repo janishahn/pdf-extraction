@@ -395,10 +395,12 @@ class HelpDialog(QDialog):
 
         <h3>Mask Controls</h3>
         <table border="1" style="border-collapse: collapse; width: 100%;">
-        <tr><td><b>Accept Mask</b></td><td>Enter</td></tr>
+        <tr><td><b>Accept Mask</b></td><td>Enter or Space</td></tr>
+        <tr><td><b>Discard Mask</b></td><td>Escape</td></tr>
         <tr><td><b>Delete Selected Mask</b></td><td>Delete or Backspace</td></tr>
         <tr><td><b>Merge Selected Masks</b></td><td>M</td></tr>
         <tr><td><b>Split Selected Mask</b></td><td>S</td></tr>
+        <tr><td><b>Expand Selected Mask</b></td><td>E</td></tr>
         </table>
 
         <h3>Approval Controls</h3>
@@ -418,7 +420,7 @@ class HelpDialog(QDialog):
         <li><b>PDF Selection:</b> Click on any PDF in the left panel to view it</li>
         <li><b>Page Navigation:</b> Use keyboard shortcuts (← → or Page Up/Down) to navigate pages</li>
         <li><b>Zoom:</b> Use the combined zoom button or keyboard shortcuts to zoom in/out</li>
-        <li><b>Creating Masks:</b> Click "Draw Rectangle Mask", then drag to draw a rectangle. Press Enter or use Accept/Cancel buttons to save or discard.</li>
+        <li><b>Creating Masks:</b> Click "Draw Rectangle Mask", then drag to draw a rectangle. Press Enter/Space to accept or Escape to discard.</li>
         <li><b>Editing Masks:</b> Select masks to move them around the page</li>
         <li><b>State Persistence:</b> All navigation state is automatically saved</li>
         <li><b>Bulk Approval:</b> Use "Accept All Pages" to approve all pages in the current PDF at once</li>
@@ -722,26 +724,6 @@ class MainWindow(QMainWindow):
 
         layout.addLayout(nav_layout)
 
-        self.rectangle_controls_layout = QHBoxLayout()
-        self.accept_rectangle_btn = QPushButton("Accept Mask")
-        self.accept_rectangle_btn.clicked.connect(self.accept_rectangle)
-        self.cancel_rectangle_btn = QPushButton("Cancel")
-        self.cancel_rectangle_btn.clicked.connect(self.cancel_rectangle)
-
-        self.accept_rectangle_btn.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; }")
-        self.cancel_rectangle_btn.setStyleSheet("QPushButton { background-color: #f44336; color: white; font-weight: bold; }")
-
-        self.rectangle_controls_layout.addWidget(QLabel("Rectangle drawn:"))
-        self.rectangle_controls_layout.addWidget(self.accept_rectangle_btn)
-        self.rectangle_controls_layout.addWidget(self.cancel_rectangle_btn)
-        self.rectangle_controls_layout.addStretch()
-
-        self.rectangle_controls_widget = QWidget()
-        self.rectangle_controls_widget.setLayout(self.rectangle_controls_layout)
-        self.rectangle_controls_widget.hide()
-
-        layout.addWidget(self.rectangle_controls_widget)
-
         self.graphics_view = QGraphicsView()
         self.page_scene = PageScene(self)
         self.graphics_view.setScene(self.page_scene)
@@ -826,6 +808,11 @@ class MainWindow(QMainWindow):
         self.select_all_action.triggered.connect(self.select_all_masks)
         toolbar.addAction(self.select_all_action)
 
+        self.expand_mask_action = QAction("Expand Mask", self)
+        self.expand_mask_action.triggered.connect(self.expand_selected_mask)
+        self.expand_mask_action.setEnabled(False) # Initially disabled
+        toolbar.addAction(self.expand_mask_action)
+
     def create_status_bar(self):
         """Create the status bar."""
         self.status_bar = QStatusBar()
@@ -888,19 +875,20 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("M"), self, self.merge_selected_masks) # Shortcut for merging
         QShortcut(QKeySequence("S"), self, self.split_selected_mask) # New shortcut for splitting
         QShortcut(QKeySequence("Ctrl+A"), self, self.select_all_masks) # Select all masks
+        QShortcut(QKeySequence("E"), self, self.expand_selected_mask) # New shortcut for expanding mask
 
     def handle_enter_key(self):
         """
-        Handle Enter or Space key press - accept rectangle if controls are visible.
+        Handle Enter or Space key press - accept rectangle if pending.
         """
-        if self.rectangle_controls_widget.isVisible() and self.page_scene.has_pending_rectangle():
+        if self.page_scene.has_pending_rectangle():
             self.accept_rectangle()
 
     def handle_escape_key(self):
         """
-        Handle Escape key press - discard the currently drawn rectangle if controls are visible.
+        Handle Escape key press - discard the currently drawn rectangle if pending.
         """
-        if self.rectangle_controls_widget.isVisible() and self.page_scene.has_pending_rectangle():
+        if self.page_scene.has_pending_rectangle():
             self.cancel_rectangle()
 
     def handle_delete_key(self):
@@ -1159,20 +1147,17 @@ class MainWindow(QMainWindow):
             self.update_mask_list()
 
     def on_rectangle_drawn(self, rect: QRectF):
-        """Handle rectangle completion - show accept/cancel controls."""
-        self.rectangle_controls_widget.show()
-        self.status_bar.showMessage("Rectangle drawn. Click 'Accept Mask' to save or 'Cancel' to discard.")
+        """Handle rectangle completion - show status message for keyboard shortcuts."""
+        self.status_bar.showMessage("Rectangle drawn. Press Enter/Space to save or Escape to discard.")
 
     def accept_rectangle(self):
         """Accept the drawn rectangle as a mask."""
         self.page_scene.accept_rectangle()
-        self.rectangle_controls_widget.hide()
         self.status_bar.showMessage("Mask created successfully.")
 
     def cancel_rectangle(self):
         """Cancel the drawn rectangle."""
         self.page_scene.cancel_current_drawing()
-        self.rectangle_controls_widget.hide()
         self.status_bar.showMessage("Rectangle drawing cancelled.")
 
     def delete_selected_mask_from_scene(self):
@@ -1280,21 +1265,14 @@ class MainWindow(QMainWindow):
         pdf_path, state = self.pdf_states[self.current_pdf_index]
         total_pages = state["page_count"]
 
-        confirm = QMessageBox.question(
-            self,
-            "Accept All Pages",
-            f"Are you sure you want to accept all {total_pages} pages in {os.path.basename(pdf_path)}?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
+        for page_num in range(1, total_pages + 1):
+            storage.approve_page(state, page_num)
 
-        if confirm == QMessageBox.StandardButton.Yes:
-            for page_num in range(1, total_pages + 1):
-                storage.approve_page(state, page_num)
-
-            storage.save_state(pdf_path, state)
-            self.update_pdf_list_item(self.current_pdf_index)
-            self.update_display()
+        storage.save_state(pdf_path, state)
+        self.update_pdf_list_item(self.current_pdf_index)
+        self.update_display()
+        
+        self.status_bar.showMessage(f"All {total_pages} pages in {os.path.basename(pdf_path)} have been approved!", 4000)
 
     def on_mask_selected_in_scene(self, mask_id: str):
         """Handle mask selection from the scene and update list selection."""
@@ -1354,6 +1332,9 @@ class MainWindow(QMainWindow):
         self.split_mask_btn.setEnabled(can_split)
         self.split_mask_action.setEnabled(can_split)
 
+        can_expand = selected_count == 1
+        self.expand_mask_action.setEnabled(can_expand)
+
         self.mask_list_widget.blockSignals(False)
 
     def on_mask_list_selection_changed(self):
@@ -1404,12 +1385,105 @@ class MainWindow(QMainWindow):
         self.split_mask_btn.setEnabled(can_split)
         self.split_mask_action.setEnabled(can_split)
 
+        can_expand = selected_count == 1
+        self.expand_mask_action.setEnabled(can_expand)
+
         # Ensure the first selected mask is visible
         if selected_mask_item:
             view = self.graphics_view
             view.ensureVisible(selected_mask_item)
 
         self.page_scene.blockSignals(False)
+
+    def _get_bounding_box_from_points(self, points: List[List[float]]) -> QRectF:
+        """
+        Calculates the bounding box (QRectF) from a list of polygon points.
+        """
+        min_x = min(p[0] for p in points)
+        min_y = min(p[1] for p in points)
+        max_x = max(p[0] for p in points)
+        max_y = max(p[1] for p in points)
+        return QRectF(min_x, min_y, max_x - min_x, max_y - min_y)
+
+    def expand_selected_mask(self):
+        """
+        Expands the currently selected mask to include adjacent small vector graphics (letters).
+        """
+        selected_items = self.page_scene.selectedItems()
+        if len(selected_items) != 1:
+            self.status_bar.showMessage("Select exactly one mask to expand.", 3000)
+            return
+
+        mask_to_expand = selected_items[0]
+        if not isinstance(mask_to_expand, EditableMaskItem):
+            self.status_bar.showMessage("Selected item is not a mask.", 3000)
+            return
+
+        self.status_bar.showMessage("Expanding mask...", 0)
+
+        pdf_path, state = self.pdf_states[self.current_pdf_index]
+        page_num = self.current_page_index + 1
+        
+        # Get all vector graphics on the current page
+        all_vector_boxes = vector_bbox.get_page_vector_boxes(pdf_path, page_num - 1, dpi=300)
+        
+        initial_mask_rect = mask_to_expand.sceneBoundingRect()
+        
+        # Define a tolerance for adjacency (e.g., 30 pixels)
+        ADJACENCY_TOLERANCE = 30.0 
+
+        # List to store all adjacent vector rectangles found
+        adjacent_vector_rects = []
+
+        # Expand the initial mask rect by the tolerance for checking adjacency
+        expanded_initial_mask_rect = initial_mask_rect.adjusted(
+            -ADJACENCY_TOLERANCE, -ADJACENCY_TOLERANCE,
+            ADJACENCY_TOLERANCE, ADJACENCY_TOLERANCE
+        )
+
+        for vb_x0, vb_y0, vb_x1, vb_y1 in all_vector_boxes:
+            vector_rect = QRectF(vb_x0, vb_y0, vb_x1 - vb_x0, vb_y1 - vb_y0)
+            
+            # Expand both rectangles by tolerance and check for intersection
+            expanded_vector_rect = vector_rect.adjusted(
+                -ADJACENCY_TOLERANCE, -ADJACENCY_TOLERANCE,
+                ADJACENCY_TOLERANCE, ADJACENCY_TOLERANCE
+            )
+
+            if expanded_initial_mask_rect.intersects(expanded_vector_rect):
+                adjacent_vector_rects.append(vector_rect)
+        
+        if not adjacent_vector_rects:
+            self.status_bar.showMessage("No adjacent vector graphics found to expand the mask.", 3000)
+            return
+
+        # Calculate the new combined bounding box by uniting the initial mask rect
+        # with all found adjacent vector rectangles.
+        new_combined_rect = initial_mask_rect
+        for adj_rect in adjacent_vector_rects:
+            new_combined_rect = new_combined_rect.united(adj_rect)
+        
+        # Only proceed if the new combined rectangle is actually larger than the original
+        if new_combined_rect == initial_mask_rect:
+            self.status_bar.showMessage("Mask did not expand further (no new adjacent graphics found).", 3000)
+            return
+
+        # Delete original mask
+        self.delete_mask_by_id(mask_to_expand.mask_id)
+
+        # Create new expanded mask
+        new_mask_points = [
+            [new_combined_rect.left(), new_combined_rect.top()],
+            [new_combined_rect.right(), new_combined_rect.top()],
+            [new_combined_rect.right(), new_combined_rect.bottom()],
+            [new_combined_rect.left(), new_combined_rect.bottom()]
+        ]
+        
+        storage.add_mask_to_page(state, page_num, new_mask_points)
+        storage.save_state(pdf_path, state)
+
+        self.update_display()
+        self.status_bar.showMessage("Mask expanded successfully.", 3000)
 
     def get_pdf_display_name(self, pdf_path: str, state: Dict[str, Any]) -> str:
         """Get display name for PDF in the list."""
@@ -1544,50 +1618,39 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage("Select at least two masks to merge.", 3000)
             return
 
-        confirm = QMessageBox.question(
-            self,
-            "Merge Masks",
-            f"Are you sure you want to merge {len(masks_to_merge)} selected masks into one?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
+        # Calculate combined bounding box
+        min_x = float('inf')
+        min_y = float('inf')
+        max_x = float('-inf')
+        max_y = float('-inf')
 
-        if confirm == QMessageBox.StandardButton.Yes:
-            # Calculate combined bounding box
-            min_x = float('inf')
-            min_y = float('inf')
-            max_x = float('-inf')
-            max_y = float('-inf')
+        for mask_item in masks_to_merge:
+            # Use sceneBoundingRect to get coordinates in the scene's coordinate system
+            rect = mask_item.sceneBoundingRect()
+            min_x = min(min_x, rect.left())
+            min_y = min(min_y, rect.top())
+            max_x = max(max_x, rect.right())
+            max_y = max(max_y, rect.bottom())
 
-            for mask_item in masks_to_merge:
-                # Use sceneBoundingRect to get coordinates in the scene's coordinate system
-                rect = mask_item.sceneBoundingRect()
-                min_x = min(min_x, rect.left())
-                min_y = min(min_y, rect.top())
-                max_x = max(max_x, rect.right())
-                max_y = max(max_y, rect.bottom())
+        new_mask_points = [
+            [min_x, min_y],
+            [max_x, min_y],
+            [max_x, max_y],
+            [min_x, max_y]
+        ]
 
-            new_mask_points = [
-                [min_x, min_y],
-                [max_x, min_y],
-                [max_x, max_y],
-                [min_x, max_y]
-            ]
+        # Delete original masks
+        for mask_item in masks_to_merge:
+            self.delete_mask_by_id(mask_item.mask_id)
 
-            # Delete original masks
-            for mask_item in masks_to_merge:
-                self.delete_mask_by_id(mask_item.mask_id)
+        # Create new merged mask
+        pdf_path, state = self.pdf_states[self.current_pdf_index]
+        page_num = self.current_page_index + 1
+        storage.add_mask_to_page(state, page_num, new_mask_points)
+        storage.save_state(pdf_path, state)
 
-            # Create new merged mask
-            pdf_path, state = self.pdf_states[self.current_pdf_index]
-            page_num = self.current_page_index + 1
-            storage.add_mask_to_page(state, page_num, new_mask_points)
-            storage.save_state(pdf_path, state)
-
-            self.update_display()
-            self.status_bar.showMessage(f"Successfully merged {len(masks_to_merge)} masks.", 3000)
-        else:
-            self.status_bar.showMessage("Mask merge cancelled.", 3000)
+        self.update_display()
+        self.status_bar.showMessage(f"Successfully merged {len(masks_to_merge)} masks.", 3000)
 
     def split_selected_mask(self):
         """
