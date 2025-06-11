@@ -264,6 +264,7 @@ def export_all(pdf_path: str, dpi: int = 300) -> Dict[str, Any]:
                 manifest["exported_masks"].append({
                     "page": page_num,
                     "mask_id": mask_id,
+                    "type": mask_data.get("type", "image"),
                     "bbox": list(bbox),
                     "points": original_points,
                     "scaled_points": scaled_points,

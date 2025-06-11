@@ -55,9 +55,21 @@ class EdgeHandle(QGraphicsEllipseItem):
 
 
 class EditableMaskItem(QGraphicsRectItem):
-    """An editable rectangular mask with edge drag handles."""
+    """An editable rectangular mask with edge drag handles.
+
+    Parameters
+    ----------
+    mask_id : str
+        Unique identifier of the mask
+    points : List[List[float]]
+        Four corner points of the rectangle (GUI coordinates)
+    mask_type : str, optional
+        Either "image" or "question" to distinguish semantics, default "image".
+    parent : Optional[QGraphicsItem]
+        Optional parent graphics item
+    """
     
-    def __init__(self, mask_id: str, points: List[List[float]], parent: Optional[QGraphicsItem] = None):
+    def __init__(self, mask_id: str, points: List[List[float]], mask_type: str = "image", parent: Optional[QGraphicsItem] = None):
         # Convert points to rectangle
         x_coords = [p[0] for p in points]
         y_coords = [p[1] for p in points]
@@ -71,6 +83,7 @@ class EditableMaskItem(QGraphicsRectItem):
         self.setPos(x0, y0)
         
         self.mask_id = mask_id
+        self.mask_type = mask_type
         self.handles: Dict[str, EdgeHandle] = {}
         self.is_updating_handles = False
         
@@ -78,10 +91,16 @@ class EditableMaskItem(QGraphicsRectItem):
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
         
-        self.default_brush = QBrush(QColor(0, 0, 255, 100))
-        self.hover_brush = QBrush(QColor(0, 0, 255, 150))
+        # Color scheme depends on mask type
+        if self.mask_type == "question":
+            base_color = QColor(0, 150, 0)  # greenish
+        else:  # image
+            base_color = QColor(0, 0, 255)
+
+        self.default_brush = QBrush(QColor(base_color.red(), base_color.green(), base_color.blue(), 100))
+        self.hover_brush = QBrush(QColor(base_color.red(), base_color.green(), base_color.blue(), 150))
         self.selected_brush = QBrush(QColor(255, 165, 0, 180))
-        self.default_pen = QPen(QColor(0, 0, 255), 1)
+        self.default_pen = QPen(base_color, 1)
         self.selected_pen = QPen(QColor(255, 165, 0), 2.5)
         
         self.setBrush(self.default_brush)
@@ -99,12 +118,25 @@ class EditableMaskItem(QGraphicsRectItem):
             handle.setParentItem(self)
             self.handles[edge] = handle
     
-    def _update_handle_positions(self):
-        """Update handle positions based on current rectangle."""
-        if self.is_updating_handles:
+    def _update_handle_positions(self, force: bool = False):
+        """Update handle positions based on current rectangle.
+
+        Parameters
+        ----------
+        force : bool, optional
+            If True, update the handle positions even when a resize operation
+            is already in progress. This is required to keep the handles in
+            sync while the user is actively dragging one of them. The default
+            is False which avoids recursive updates when handles are moved
+            indirectly (e.g. when the entire mask is moved).
+        """
+        if self.is_updating_handles and not force:
             return
-            
+
         rect = self.rect()
+        # Temporarily mark as updating to prevent recursive geometry updates
+        prev_state = self.is_updating_handles
+        self.is_updating_handles = True
         positions = {
             'top': QPointF(rect.center().x(), rect.top()),
             'bottom': QPointF(rect.center().x(), rect.bottom()),
@@ -114,6 +146,9 @@ class EditableMaskItem(QGraphicsRectItem):
         
         for edge, pos in positions.items():
             self.handles[edge].setPos(pos)
+        
+        # Restore previous updating state
+        self.is_updating_handles = prev_state
     
     def _set_handles_visible(self, visible: bool):
         """Show or hide the edge handles."""
@@ -148,7 +183,9 @@ class EditableMaskItem(QGraphicsRectItem):
                 rect.setRight(new_right)
         
         self.setRect(rect)
-        self._update_handle_positions()
+        # Force-update positions of all handles so they stay aligned while
+        # the user continues dragging.
+        self._update_handle_positions(force=True)
         
         self.is_updating_handles = False
         

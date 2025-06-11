@@ -3,6 +3,7 @@ import os
 import export
 from export import check_all_pages_approved
 import vector_bbox
+import question_bbox
 from editable_mask import EditableMaskItem
 from shapely.geometry import Polygon, box, LineString
 
@@ -30,21 +31,40 @@ except ImportError:
 import storage
 
 class MaskItem(QGraphicsPolygonItem):
-    """A QGraphicsPolygonItem representing a mask with metadata."""
+    """A QGraphicsPolygonItem representing a mask with metadata.
 
-    def __init__(self, mask_id: str, points: List[List[float]], parent: Optional[QGraphicsItem] = None):
+    Parameters
+    ----------
+    mask_id : str
+        Unique identifier of the mask
+    points : List[List[float]]
+        Polygon points in scene coordinates
+    mask_type : str, optional
+        Either "image" or "question", default "image"
+    parent : Optional[QGraphicsItem]
+        Parent graphics item
+    """
+
+    def __init__(self, mask_id: str, points: List[List[float]], mask_type: str = "image", parent: Optional[QGraphicsItem] = None):
         super().__init__(parent)
         self.mask_id = mask_id
+        self.mask_type = mask_type
         self.setPolygon(QPolygonF([QPointF(p[0], p[1]) for p in points]))
 
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
 
-        self.default_brush = QBrush(QColor(0, 0, 255, 100))
-        self.hover_brush = QBrush(QColor(0, 0, 255, 150))
+        # Color depends on mask type
+        if self.mask_type == "question":
+            base_color = QColor(0, 150, 0)
+        else:
+            base_color = QColor(0, 0, 255)
+
+        self.default_brush = QBrush(QColor(base_color.red(), base_color.green(), base_color.blue(), 100))
+        self.hover_brush = QBrush(QColor(base_color.red(), base_color.green(), base_color.blue(), 150))
         self.selected_brush = QBrush(QColor(255, 165, 0, 180))  # Orange for selection
-        self.default_pen = QPen(QColor(0, 0, 255), 1)
+        self.default_pen = QPen(base_color, 1)
         self.selected_pen = QPen(QColor(255, 165, 0), 2.5)  # Thicker orange pen for selection
 
         self.setBrush(self.default_brush)
@@ -108,6 +128,8 @@ class PageScene(QGraphicsScene):
         self.rectangle_start_point: Optional[QPointF] = None
         self.temp_rectangle_item: Optional[QGraphicsRectItem] = None
         self.is_erasing_draw = False  # Track if current rectangle is eraser
+        self.current_draw_ctrl = False  # Track whether Ctrl/Cmd was held during current rectangle
+        self.last_mask_ctrl_flag = False  # Exposed flag for MainWindow to inspect
 
     def load_page(self, pdf_path: str, page_index: int, page_state: Dict[str, Any]):
         """Load and render a PDF page and its masks."""
@@ -129,10 +151,11 @@ class PageScene(QGraphicsScene):
             # Add existing masks from page state
             for mask_data in page_state.get("masks", []):
                 points = mask_data["points"]
+                m_type = mask_data.get("type", "image")
                 if len(points) != 4:
-                    mask_item = MaskItem(mask_data["id"], points)
+                    mask_item = MaskItem(mask_data["id"], points, m_type)
                 else:
-                    mask_item = EditableMaskItem(mask_data["id"], points)
+                    mask_item = EditableMaskItem(mask_data["id"], points, m_type)
                 self.addItem(mask_item)
                 self.current_masks[mask_data["id"]] = mask_item
 
@@ -220,6 +243,7 @@ class PageScene(QGraphicsScene):
         self.is_drawing_rectangle = False
         self.rectangle_start_point = None
         self.is_erasing_draw = False  # Reset eraser mode
+        self.current_draw_ctrl = False  # Reset ctrl flag
         if self.temp_rectangle_item:
             if self.temp_rectangle_item.scene() is not None:
                 self.temp_rectangle_item.scene().removeItem(self.temp_rectangle_item)
@@ -229,6 +253,9 @@ class PageScene(QGraphicsScene):
         if self.mode == self.MODE_DRAW and event.button() == Qt.MouseButton.LeftButton:
             self.cancel_current_drawing()
             self.is_erasing_draw = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+            # Detect Ctrl (Windows/Linux) or Meta (Command on macOS)
+            ctrl_or_cmd = Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier
+            self.current_draw_ctrl = bool(event.modifiers() & ctrl_or_cmd)
             self.is_drawing_rectangle = True
             self.rectangle_start_point = event.scenePos()
 
@@ -297,6 +324,9 @@ class PageScene(QGraphicsScene):
                     [rect.right(), rect.bottom()],
                     [rect.left(), rect.bottom()]
                 ]
+                # Store the ctrl flag for MainWindow to evaluate BEFORE emitting signal
+                self.last_mask_ctrl_flag = self.current_draw_ctrl
+                self.current_draw_ctrl = False
                 self.mask_created.emit(points)
 
     def has_pending_rectangle(self) -> bool:
@@ -630,6 +660,8 @@ class MainWindow(QMainWindow):
         self.has_user_zoom_preference = False
         self.manual_zoom_transform = None
 
+        self.current_draw_type = "image"  # default draw type
+        self.pending_question_group_id: Optional[str] = None  # For multi-page question masks
         self.init_ui()
         self.load_first_pdf()
 
@@ -788,23 +820,29 @@ class MainWindow(QMainWindow):
         self.select_mode_action.triggered.connect(self.activate_select_mode)
         toolbar.addAction(self.select_mode_action)
 
-        self.draw_mode_action = QAction("Draw Rectangle Mask", self, checkable=True)
-        self.draw_mode_action.triggered.connect(self.toggle_draw_mode)
+        # Draw actions for different mask types
+        self.draw_mode_action = QAction("Draw Image Region", self, checkable=True)
+        self.draw_mode_action.triggered.connect(lambda checked: self.toggle_draw_mode("image", checked))
         toolbar.addAction(self.draw_mode_action)
 
+        self.draw_question_action = QAction("Draw Question Region", self, checkable=True)
+        self.draw_question_action.triggered.connect(lambda checked: self.toggle_draw_mode("question", checked))
+        toolbar.addAction(self.draw_question_action)
+
+        # Automatic computation of question masks for entire PDF
+        compute_qm_action = QAction("Compute Question Masks", self)
+        compute_qm_action.triggered.connect(self.compute_question_masks)
+        toolbar.addAction(compute_qm_action)
+
+        # Multi-page question toggle placed next to compute action
+        self.multi_page_question_action = QAction("Multi-page Q", self, checkable=True)
+        self.multi_page_question_action.setToolTip("Toggle multi-page question drawing mode")
+        toolbar.addAction(self.multi_page_question_action)
+
+        # Keyboard shortcut to toggle multi-page mode (key 'Q')
+        QShortcut(QKeySequence("Q"), self, lambda: self.multi_page_question_action.trigger())
+
         toolbar.addSeparator()
-
-        approve_page_action = QAction("Approve Page", self)
-        approve_page_action.triggered.connect(self.approve_current_page)
-        toolbar.addAction(approve_page_action)
-
-        accept_all_action = QAction("Accept All Pages", self)
-        accept_all_action.triggered.connect(self.accept_all_pages)
-        toolbar.addAction(accept_all_action)
-
-        delete_mask_action = QAction("Delete Selected Mask", self)
-        delete_mask_action.triggered.connect(self.delete_selected_mask_from_scene)
-        toolbar.addAction(delete_mask_action)
 
         self.merge_masks_action = QAction("Merge Selected Masks", self)
         self.merge_masks_action.triggered.connect(self.merge_selected_masks)
@@ -816,10 +854,6 @@ class MainWindow(QMainWindow):
         self.split_mask_action.setEnabled(False) # Initially disabled
         toolbar.addAction(self.split_mask_action)
 
-        self.select_all_action = QAction("Select All Masks", self)
-        self.select_all_action.triggered.connect(self.select_all_masks)
-        toolbar.addAction(self.select_all_action)
-
         self.expand_mask_action = QAction("Expand Mask", self)
         self.expand_mask_action.triggered.connect(self.expand_selected_mask)
         self.expand_mask_action.setEnabled(False) # Initially disabled
@@ -828,6 +862,14 @@ class MainWindow(QMainWindow):
         self.add_mask_action = QAction("Add Selected Masks", self)
         self.add_mask_action.triggered.connect(self.add_selected_masks)
         toolbar.addAction(self.add_mask_action)
+
+        # Associate images with question
+        self.associate_action = QAction("Associate Images → Question", self)
+        self.associate_action.triggered.connect(self.associate_selected_masks)
+        toolbar.addAction(self.associate_action)
+
+        # Keyboard shortcut for association (Ctrl+L)
+        QShortcut(QKeySequence("Ctrl+L"), self, self.associate_selected_masks)
 
     def create_status_bar(self):
         """Create the status bar."""
@@ -1071,6 +1113,13 @@ class MainWindow(QMainWindow):
         # Apply zoom only if user hasn't set a preference, or preserve their preference
         self.apply_zoom_preference()
 
+        # Re-apply dashed highlight for pending multi-page question segment
+        if getattr(self, 'pending_question_group_id', None):
+            pend_id = self.pending_question_group_id
+            if pend_id in self.page_scene.current_masks:
+                pen = QPen(QColor(255, 165, 0), 2, Qt.PenStyle.DashLine)
+                self.page_scene.current_masks[pend_id].setPen(pen)
+
     def update_mask_list(self):
         """Update the mask list widget for the current page."""
         self.mask_list_widget.clear()
@@ -1082,50 +1131,175 @@ class MainWindow(QMainWindow):
         page_key = str(page_num)
 
         if page_key in state["pages"]:
-            for mask_data in state["pages"][page_key]["masks"]:
-                item = QListWidgetItem(f"Mask {mask_data['id'][:8]}...")
+            page_masks = state["pages"][page_key]["masks"]
+            # Pre-compute reverse association: image_id -> list[question_id]
+            image_links: Dict[str, List[str]] = {}
+            for m in page_masks:
+                if m.get("type") == "question":
+                    for img_id in m.get("associated_image_ids", []):
+                        image_links.setdefault(img_id, []).append(m["id"])
+
+            for mask_data in page_masks:
+                m_type = mask_data.get("type", "image")
+                if m_type == "question":
+                    assoc = mask_data.get("associated_image_ids", [])
+                    text = f"Q {mask_data['id'][:8]} ({len(assoc)} img)"
+                    # Check for multi-page grouping
+                    group_id = mask_data.get("question_id")
+                    if group_id and group_id != mask_data["id"]:
+                        text += " Part of multi-page question"
+                else:  # image
+                    linked_q = image_links.get(mask_data["id"], [])
+                    star = "*" if linked_q else ""
+                    text = f"I{star} {mask_data['id'][:8]}..."
+
+                item = QListWidgetItem(text)
                 item.setData(Qt.ItemDataRole.UserRole, mask_data["id"])
-                icon_color = QColor(0, 0, 255, 150)
+
+                # Icon colour
+                icon_color = QColor(0, 150, 0, 150) if m_type == "question" else QColor(0, 0, 255, 150)
                 pixmap = QPixmap(16, 16)
                 pixmap.fill(icon_color)
                 item.setIcon(QIcon(pixmap))
-                item.setToolTip(f"Mask ID: {mask_data['id']}")
+
+                tooltip_lines = [f"Mask ID: {mask_data['id']}", f"Type: {m_type}"]
+                if m_type == "question":
+                    tooltip_lines.append(f"Associated images: {len(assoc)}")
+                else:
+                    if image_links.get(mask_data["id"]):
+                        tooltip_lines.append(f"Linked to {len(image_links[mask_data['id']])} question(s)")
+                item.setToolTip("\n".join(tooltip_lines))
+
                 self.mask_list_widget.addItem(item)
 
     def on_mask_created(self, points: List[List[float]]):
-        """Handle new mask creation from PageScene."""
+        """Handle new mask creation from PageScene, with support for multi-page question masks."""
         if not self.pdf_states:
             return
 
         pdf_path, state = self.pdf_states[self.current_pdf_index]
         page_num = self.current_page_index + 1
 
-        mask_id = storage.add_mask_to_page(state, page_num, points)
+        # Check whether multi-page mode is active (toolbar toggle)
+        is_multi_page_mode = self.multi_page_question_action.isChecked()
+
+        # Detect if Ctrl/Cmd was pressed during the draw operation (legacy fallback)
+        ctrl_flag = getattr(self.page_scene, 'last_mask_ctrl_flag', False)
+        self.page_scene.last_mask_ctrl_flag = False
+
+        multi_page_triggered = is_multi_page_mode or ctrl_flag
+
+        question_group_id: Optional[str] = None
+
+        # Logic for multi-page question masks
+        if self.current_draw_type == "question" and multi_page_triggered:
+            # If this is the first part, initialise a new group. Otherwise reuse the pending group.
+            if getattr(self, 'pending_question_group_id', None) is None:
+                # First segment – create mask normally, then assign its own id as group id
+                mask_id = storage.add_mask_to_page(state, page_num, points, self.current_draw_type)
+
+                # Set its question_id to its own id so subsequent segments can reference it
+                page_key = str(page_num)
+                for mask in state["pages"][page_key]["masks"]:
+                    if mask["id"] == mask_id:
+                        mask["question_id"] = mask_id
+                        break
+
+                self.pending_question_group_id = mask_id
+
+                # Visual feedback – dashed pen for the first segment
+                if mask_id in self.page_scene.current_masks:
+                    first_item = self.page_scene.current_masks[mask_id]
+                    pen = QPen(QColor(255, 165, 0), 2, Qt.PenStyle.DashLine)
+                    first_item.setPen(pen)
+
+                self.status_bar.showMessage("First part of multi-page question saved. Navigate to the next page, draw the next part and confirm.", 5000)
+            else:
+                # Second (or subsequent) segment – reuse existing group id
+                question_group_id = self.pending_question_group_id
+                mask_id = storage.add_mask_to_page(
+                    state,
+                    page_num,
+                    points,
+                    self.current_draw_type,
+                    question_id=question_group_id
+                )
+
+                # Clear pending state
+                self.pending_question_group_id = None
+
+                # Automatically disable multi-page toggle after completion
+                if self.multi_page_question_action.isChecked():
+                    self.multi_page_question_action.setChecked(False)
+
+                # Restore pen of the first segment if it is currently visible
+                if question_group_id in self.page_scene.current_masks:
+                    original_item = self.page_scene.current_masks[question_group_id]
+                    if hasattr(original_item, 'default_pen'):
+                        original_item.setPen(original_item.default_pen)
+
+                self.status_bar.showMessage("Multi-page question saved successfully.", 4000)
+        else:
+            # Normal mask creation
+            mask_id = storage.add_mask_to_page(state, page_num, points, self.current_draw_type)
+
         storage.save_state(pdf_path, state)
 
+        # Refresh the scene to include the newly created mask
         self.update_display()
 
         if self.is_continuous_draw_mode:
+            # Keep drawing mode active for current type
             self.page_scene.set_mode(PageScene.MODE_DRAW)
             self.graphics_view.setDragMode(QGraphicsView.DragMode.NoDrag)
-            self.draw_mode_action.setChecked(True)
+            if self.current_draw_type == "image":
+                self.draw_mode_action.setChecked(True)
+                if hasattr(self, 'draw_question_action'):
+                    self.draw_question_action.setChecked(False)
+            else:
+                if hasattr(self, 'draw_question_action'):
+                    self.draw_question_action.setChecked(True)
+                self.draw_mode_action.setChecked(False)
             self.select_mode_action.setChecked(False)
 
-    def toggle_draw_mode(self):
-        """Toggle continuous mask drawing mode."""
-        if not self.is_continuous_draw_mode:
+        # Apply dashed pen highlight for the very first segment if still pending
+        if getattr(self, 'pending_question_group_id', None) == mask_id:
+            if mask_id in self.page_scene.current_masks:
+                pen = QPen(QColor(255, 165, 0), 2, Qt.PenStyle.DashLine)
+                self.page_scene.current_masks[mask_id].setPen(pen)
+
+    def toggle_draw_mode(self, mask_type: str, checked: bool):
+        """Toggle continuous draw mode for a given mask type (image/question)."""
+        # Ensure mutual exclusivity of draw actions
+        if mask_type == "image":
+            other_action = self.draw_question_action
+            current_action = self.draw_mode_action
+        else:
+            other_action = self.draw_mode_action
+            current_action = self.draw_question_action
+
+        if checked:
+            # Activate draw mode for the requested type
+            self.current_draw_type = mask_type
             self.is_continuous_draw_mode = True
             self.page_scene.set_mode(PageScene.MODE_DRAW)
-            self.draw_mode_action.setChecked(True)
+            self.graphics_view.setDragMode(QGraphicsView.DragMode.NoDrag)
+
+            current_action.setChecked(True)
+            other_action.setChecked(False)
             self.select_mode_action.setChecked(False)
-            self.status_bar.showMessage("Continuous mask drawing mode activated.", 3000)
+
+            self.status_bar.showMessage(f"Continuous drawing mode activated for {mask_type} masks.", 3000)
         else:
+            # Deactivate draw mode – switch to select
             self.is_continuous_draw_mode = False
             self.page_scene.set_mode(PageScene.MODE_SELECT)
             self.graphics_view.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
-            self.draw_mode_action.setChecked(False)
+
+            current_action.setChecked(False)
             self.select_mode_action.setChecked(True)
-            self.status_bar.showMessage("Continuous mask drawing mode deactivated.", 3000)
+
+            self.status_bar.showMessage("Continuous drawing mode deactivated.", 3000)
 
     def activate_select_mode(self):
         """Activate select/move mode and deactivate continuous draw mode."""
@@ -1134,6 +1308,8 @@ class MainWindow(QMainWindow):
         self.graphics_view.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
         self.select_mode_action.setChecked(True)
         self.draw_mode_action.setChecked(False)
+        if hasattr(self, 'draw_question_action'):
+            self.draw_question_action.setChecked(False)
         self.status_bar.showMessage("Select/Move mode activated.", 3000)
 
     def on_mask_modified(self, mask_id: str, points: List[List[float]]):
@@ -1209,16 +1385,45 @@ class MainWindow(QMainWindow):
 
         self.status_bar.showMessage(f"Deleting mask {mask_id[:8]}...", 1000)
 
+        # Determine if mask is part of multi-page question
+        group_id_for_cascade: Optional[str] = None
+
+        # Find mask data to inspect question_id
+        target_mask_data = None
+        for p_key, p_data in state["pages"].items():
+            for m in p_data["masks"]:
+                if m["id"] == mask_id:
+                    target_mask_data = m
+                    break
+            if target_mask_data:
+                break
+
+        if target_mask_data and target_mask_data.get("type") == "question":
+            group_id_for_cascade = target_mask_data.get("question_id") or target_mask_data["id"]
+
         if storage.remove_mask_from_page(state, page_num, mask_id):
             storage.save_state(pdf_path, state)
-            
-            # Remove from scene directly instead of full reload
+
+            # NEW: Remove the mask item from the current scene immediately
             if mask_id in self.page_scene.current_masks:
-                mask_item = self.page_scene.current_masks[mask_id]
-                self.page_scene.removeItem(mask_item)
+                scene_item = self.page_scene.current_masks[mask_id]
+                if scene_item.scene() is not None:
+                    self.page_scene.removeItem(scene_item)
                 del self.page_scene.current_masks[mask_id]
-            
-            # Update only the mask list
+
+            # Cascade delete other segments in the same group across pages
+            if group_id_for_cascade and group_id_for_cascade == mask_id:
+                for p_key, p_data in state["pages"].items():
+                    masks_to_remove = [m["id"] for m in p_data["masks"] if m.get("question_id") == group_id_for_cascade and m["id"] != mask_id]
+                    for mid in masks_to_remove:
+                        storage.remove_mask_from_page(state, int(p_key), mid)
+                        # If segment is currently visible, remove from scene
+                        if mid in self.page_scene.current_masks:
+                            seg_item = self.page_scene.current_masks[mid]
+                            self.page_scene.removeItem(seg_item)
+                            del self.page_scene.current_masks[mid]
+                storage.save_state(pdf_path, state)
+
             self.update_mask_list()
             self.status_bar.showMessage(f"Mask {mask_id[:8]}... deleted successfully", 3000)
         else:
@@ -1649,14 +1854,17 @@ class MainWindow(QMainWindow):
             [min_x, max_y]
         ]
 
+        # Determine merged mask type: if all selected masks are question type, keep it as question
+        merged_mask_type = "question" if all(getattr(item, 'mask_type', 'image') == 'question' for item in masks_to_merge) else "image"
+
         # Delete original masks
         for mask_item in masks_to_merge:
             self.delete_mask_by_id(mask_item.mask_id)
 
-        # Create new merged mask
+        # Create new merged mask with appropriate type
         pdf_path, state = self.pdf_states[self.current_pdf_index]
         page_num = self.current_page_index + 1
-        storage.add_mask_to_page(state, page_num, new_mask_points)
+        storage.add_mask_to_page(state, page_num, new_mask_points, mask_type=merged_mask_type)
         storage.save_state(pdf_path, state)
 
         self.update_display()
@@ -1853,3 +2061,84 @@ class MainWindow(QMainWindow):
         storage.save_state(pdf_path, state)
         self.update_mask_list()
         self.status_bar.showMessage("Masks added successfully.", 3000)
+
+    # ------------------------------------------------------------------
+    # Question ↔ Image association helpers
+    # ------------------------------------------------------------------
+
+    def associate_selected_masks(self):
+        """Associate selected image masks with a single selected question mask."""
+        selected_items = self.page_scene.selectedItems()
+        if not selected_items:
+            self.status_bar.showMessage("No masks selected for association.", 3000)
+            return
+
+        question_items = [it for it in selected_items if getattr(it, 'mask_type', 'image') == 'question']
+        image_items = [it for it in selected_items if getattr(it, 'mask_type', 'image') == 'image']
+
+        if len(question_items) != 1:
+            self.status_bar.showMessage("Select exactly one question mask and one or more image masks.", 4000)
+            return
+        if not image_items:
+            self.status_bar.showMessage("Select at least one image mask to associate.", 4000)
+            return
+
+        q_item = question_items[0]
+        q_id = q_item.mask_id
+        image_ids = [it.mask_id for it in image_items]
+
+        # Update state
+        pdf_path, state = self.pdf_states[self.current_pdf_index]
+        page_num = self.current_page_index + 1
+        page_key = str(page_num)
+
+        updated = False
+        if page_key in state['pages']:
+            for mask_data in state['pages'][page_key]['masks']:
+                if mask_data['id'] == q_id:
+                    assoc_list = mask_data.setdefault('associated_image_ids', [])
+                    for img_id in image_ids:
+                        if img_id not in assoc_list:
+                            assoc_list.append(img_id)
+                            updated = True
+                    break
+
+        if updated:
+            storage.save_state(pdf_path, state)
+            self.update_mask_list()
+            self.status_bar.showMessage("Associated image masks with question.", 3000)
+        else:
+            self.status_bar.showMessage("Nothing to associate (already linked).", 3000)
+
+    def compute_question_masks(self):
+        """Compute question masks for the entire PDF."""
+        if not self.pdf_states:
+            QMessageBox.warning(self, "No PDFs", "No PDFs are loaded.")
+            return
+
+        pdf_path, state = self.pdf_states[self.current_pdf_index]
+        pdf_filename = os.path.basename(pdf_path)
+
+        self.status_bar.showMessage(f"Computing question masks for {pdf_filename}...", 0)
+
+        total_pages = state["page_count"]
+        for page_num in range(1, total_pages + 1):
+            page_key = str(page_num)
+            
+            # Ensure page exists
+            if page_key not in state["pages"]:
+                storage.ensure_page_exists(state, page_num)
+            
+            # Remove existing question masks but keep others
+            existing_masks = state["pages"][page_key]["masks"]
+            state["pages"][page_key]["masks"] = [m for m in existing_masks if m.get("type", "image") != "question"]
+
+            # Compute question boxes via text analysis
+            q_boxes = question_bbox.get_page_question_boxes(pdf_path, page_num - 1, dpi=300)
+            for x0, y0, x1, y1 in q_boxes:
+                pts = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+                storage.add_mask_to_page(state, page_num, pts, mask_type="question")
+        
+        storage.save_state(pdf_path, state)
+        self.update_display()
+        self.status_bar.showMessage(f"Successfully computed question masks for {pdf_filename}.", 5000)

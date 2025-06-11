@@ -97,8 +97,14 @@ def migrate_old_state_format(old_state: Dict[str, Any]) -> Dict[str, Any]:
         page_num = str(page["page_number"])
         new_pages[page_num] = {
             "approved": page["approved"],
-            "masks": page.get("masks", [])
+            "masks": []
         }
+        for mask in page.get("masks", []):
+            new_mask = mask.copy()
+            # Ensure backward compatibility – default to image type if missing
+            if "type" not in new_mask:
+                new_mask["type"] = "image"
+            new_pages[page_num]["masks"].append(new_mask)
     
     return {
         "page_count": old_state["page_count"],
@@ -205,26 +211,41 @@ def ensure_state_exists(pdf_path: str, page_count: int) -> Dict[str, Any]:
     return load_state(pdf_path)
 
 
-def create_mask(points: List[List[float]]) -> Dict[str, Any]:
-    """Create a new mask with a unique ID.
+def create_mask(points: List[List[float]], mask_type: str = "image", associated_image_ids: Optional[List[str]] = None, question_id: Optional[str] = None) -> Dict[str, Any]:
+    """Create a new mask with a unique ID and metadata.
     
     Parameters
     ----------
     points : List[List[float]]
         List of [x, y] coordinate pairs defining the mask
-        
+    mask_type : str, optional
+        Semantic type of the mask ("image" or "question"), by default "image"
+    associated_image_ids : Optional[List[str]], optional
+        List of image‐mask IDs associated with the question mask. Only relevant if mask_type == "question".
+    question_id : Optional[str], optional
+        Identifier for grouping multiple masks into a single question mask
+    
     Returns
     -------
     Dict[str, Any]
-        Mask dictionary with id and points
+        Mask dictionary with id, type, points and optional associations
     """
-    return {
+    mask: Dict[str, Any] = {
         "id": str(uuid.uuid4()),
-        "points": points
+        "type": mask_type,
+        "points": points,
     }
+    # If a grouping/question identifier is provided, store it. This allows
+    # representing questions that span multiple pages while keeping each
+    # drawn polygon as an individual mask.
+    if question_id is not None:
+        mask["question_id"] = question_id
+    if mask_type == "question":
+        mask["associated_image_ids"] = associated_image_ids or []
+    return mask
 
 
-def add_mask_to_page(state: Dict[str, Any], page_num: int, points: List[List[float]]) -> str:
+def add_mask_to_page(state: Dict[str, Any], page_num: int, points: List[List[float]], mask_type: str = "image", associated_image_ids: Optional[List[str]] = None, question_id: Optional[str] = None) -> str:
     """Add a mask to a specific page.
     
     Parameters
@@ -235,7 +256,13 @@ def add_mask_to_page(state: Dict[str, Any], page_num: int, points: List[List[flo
         Page number (1-based)
     points : List[List[float]]
         List of [x, y] coordinate pairs defining the mask
-        
+    mask_type : str, optional
+        Semantic type of the mask ("image" or "question"), by default "image"
+    associated_image_ids : Optional[List[str]], optional
+        List of associated image mask IDs when creating a question mask
+    question_id : Optional[str], optional
+        Identifier for grouping multiple masks into a single question mask
+    
     Returns
     -------
     str
@@ -245,7 +272,7 @@ def add_mask_to_page(state: Dict[str, Any], page_num: int, points: List[List[flo
     if page_key not in state["pages"]:
         raise ValueError(f"Page {page_num} does not exist in state")
     
-    mask = create_mask(points)
+    mask = create_mask(points, mask_type, associated_image_ids, question_id)
     state["pages"][page_key]["masks"].append(mask)
     return mask["id"]
 
