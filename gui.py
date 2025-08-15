@@ -20,7 +20,7 @@ try:
         QSplitter, QGraphicsView, QGraphicsScene, QStatusBar,
         QMessageBox, QMenuBar, QDialog, QTextEdit, QDockWidget,
         QToolBar, QGraphicsPolygonItem, QGraphicsItem, QGraphicsRectItem,
-        QApplication, QFileDialog, QAbstractItemView
+        QApplication, QFileDialog, QAbstractItemView, QFormLayout, QComboBox, QSpinBox, QCheckBox, QLineEdit
     )
     from PyQt6.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer
     from PyQt6.QtGui import QPixmap, QImage, QShortcut, QKeySequence, QAction, QPolygonF, QPen, QBrush, QColor, QIcon
@@ -558,6 +558,170 @@ class MaskPropertiesDock(QDockWidget):
                 print(f"Error updating mask properties: {e}")
 
 
+class MetadataDock(QDockWidget):
+    """A dock widget to display and edit PDF-level metadata and image mask option labels."""
+
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__("Metadata", parent)
+        self._current_pdf_index: Optional[int] = None
+        self._current_page_index: Optional[int] = None
+        self._current_mask_id: Optional[str] = None
+        self._current_mask_type: Optional[str] = None
+        self._main: Optional["MainWindow"] = None
+        self.init_ui()
+
+    def init_ui(self):
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(6)
+
+        # PDF metadata form
+        layout.addWidget(QLabel("PDF Metadata"))
+        form = QFormLayout()
+        self.year_spin = QSpinBox()
+        self.year_spin.setRange(1900, 2099)
+        self.grade_combo = QComboBox()
+        self.grade_combo.addItems(["3-4", "5-6", "7-8", "9-10", "11-13"]) 
+        form.addRow("Year", self.year_spin)
+        form.addRow("Grade Group", self.grade_combo)
+        layout.addLayout(form)
+
+        self.save_pdf_meta_btn = QPushButton("Save PDF Metadata")
+        self.save_pdf_meta_btn.clicked.connect(self._save_pdf_metadata)
+        layout.addWidget(self.save_pdf_meta_btn)
+
+        layout.addWidget(QLabel("Option Label"))
+        self.option_combo = QComboBox()
+        self.option_combo.addItem("")
+        for ch in ["A", "B", "C", "D", "E"]:
+            self.option_combo.addItem(ch)
+        self.option_combo.currentIndexChanged.connect(self._save_mask_option)
+        self.option_checked = QCheckBox("Option Label Checked")
+        layout.addWidget(self.option_combo)
+        layout.addWidget(self.option_checked)
+
+        layout.addStretch()
+        self.setWidget(container)
+        self.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetFloatable | QDockWidget.DockWidgetFeature.DockWidgetMovable)
+        self.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
+
+        self._update_mask_controls_enabled(False)
+
+    def bind_main(self, main: "MainWindow"):
+        self._main = main
+
+    def load_pdf_metadata(self, state: Dict[str, Any]):
+        meta = state.get("pdf_metadata", {})
+        self.year_spin.setValue(int(meta.get("year", 2000)))
+        gg = str(meta.get("grade_group", "5-6"))
+        idx = max(0, self.grade_combo.findText(gg))
+        self.grade_combo.setCurrentIndex(idx)
+
+    def set_context(self, pdf_index: int, page_index: int):
+        self._current_pdf_index = pdf_index
+        self._current_page_index = page_index
+        if self._main and 0 <= pdf_index < len(self._main.pdf_states):
+            _, state = self._main.pdf_states[pdf_index]
+            self.load_pdf_metadata(state)
+
+    def update_mask_selection(self, mask_data: Optional[Dict[str, Any]]):
+        if not mask_data or mask_data.get("type", "image") != "image":
+            self._current_mask_id = None
+            self._current_mask_type = None
+            self._update_mask_controls_enabled(False)
+            # Block signals while clearing to avoid accidental saves
+            self.option_combo.blockSignals(True)
+            self.option_combo.setCurrentIndex(0)
+            self.option_combo.blockSignals(False)
+            self.option_checked.setChecked(False)
+            return
+
+        # Populate controls from mask data without emitting save
+        self._current_mask_id = mask_data["id"]
+        self._current_mask_type = "image"
+        label = mask_data.get("option_label", "")
+        idx = self.option_combo.findText(label)
+        # Prevent programmatic change from emitting the save slot
+        self.option_combo.blockSignals(True)
+        self.option_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self.option_combo.blockSignals(False)
+        # Only set the checkbox to the stored value; do not flip it here
+        self.option_checked.setChecked(bool(mask_data.get("option_label_checked", False)))
+        self._update_mask_controls_enabled(True)
+
+    def _update_mask_controls_enabled(self, enabled: bool):
+        self.option_combo.setEnabled(enabled)
+        self.option_checked.setEnabled(enabled)
+
+    def _save_pdf_metadata(self):
+        if not self._main or self._current_pdf_index is None:
+            return
+        pdf_path, state = self._main.pdf_states[self._current_pdf_index]
+        state.setdefault("pdf_metadata", {})
+        state["pdf_metadata"]["year"] = int(self.year_spin.value())
+        state["pdf_metadata"]["grade_group"] = self.grade_combo.currentText()
+        storage.save_state(pdf_path, state)
+        self._main.status_bar.showMessage("PDF metadata saved.", 3000)
+
+    def _save_mask_option(self, index: Optional[int] = None):
+        """Save the selected option label immediately.
+
+        Only set `option_label_checked` to True when the label actually changes;
+        otherwise leave the checked state unchanged. Preserve UI selection.
+        """
+        if not self._main or self._current_pdf_index is None or self._current_page_index is None:
+            return
+        if not self._current_mask_id:
+            return
+        pdf_path, state = self._main.pdf_states[self._current_pdf_index]
+        page_key = str(self._current_page_index + 1)
+        page = state.get("pages", {}).get(page_key)
+        if not page:
+            return
+
+        selected_mask_id = self._current_mask_id
+        for m in page.get("masks", []):
+            if m.get("id") == selected_mask_id and m.get("type", "image") == "image":
+                old_label = m.get("option_label", "")
+                new_label = self.option_combo.currentText()
+                m["option_label"] = new_label
+                # Only mark checked when label actually changed
+                if new_label != old_label:
+                    m["option_label_checked"] = True
+                # Do not overwrite m["option_label_checked"] when label unchanged
+                break
+
+        storage.save_state(pdf_path, state)
+
+        # Refresh mask list but preserve selection
+        self._main.update_mask_list()
+
+        # Re-select the mask in the list
+        for i in range(self._main.mask_list_widget.count()):
+            item = self._main.mask_list_widget.item(i)
+            if item.data(Qt.ItemDataRole.UserRole) == selected_mask_id:
+                item.setSelected(True)
+                self._main.mask_list_widget.scrollToItem(item)
+                break
+
+        # Re-select the mask in the scene if present
+        if selected_mask_id in self._main.page_scene.current_masks:
+            self._main.page_scene.blockSignals(True)
+            try:
+                self._main.page_scene.current_masks[selected_mask_id].setSelected(True)
+            finally:
+                self._main.page_scene.blockSignals(False)
+
+        # Reload the saved mask into the dock controls (blocks signals when setting combo)
+        for m in page.get("masks", []):
+            if m.get("id") == selected_mask_id:
+                self.update_mask_selection(m)
+                break
+
+        self._main.status_bar.showMessage("Mask option saved.", 3000)
+
+
 class CombinedZoomButton(QWidget):
     """A combined zoom button with zoom in and zoom out functionality."""
     
@@ -651,17 +815,18 @@ class MainWindow(QMainWindow):
         self.current_pdf_index = 0
         self.current_page_index = 0
         self.current_pixmap = None
-        self.is_continuous_draw_mode: bool = False
-        self.page_scene: Optional[PageScene] = None
-        self.mask_properties_dock: Optional[MaskPropertiesDock] = None # New instance variable
-        
+        self.is_continuous_draw_mode = False
+        self.page_scene = None
+        self.mask_properties_dock = None
+        self.metadata_dock = None
+
         # Zoom state tracking
         self.zoom_mode = "none"  # "none", "fit_to_view", "fit_to_width", "manual"
         self.has_user_zoom_preference = False
         self.manual_zoom_transform = None
 
         self.current_draw_type = "image"  # default draw type
-        self.pending_question_group_id: Optional[str] = None  # For multi-page question masks
+        self.pending_question_group_id = None
         self.init_ui()
         self.load_first_pdf()
 
@@ -689,7 +854,8 @@ class MainWindow(QMainWindow):
         splitter.setSizes([300, 900])
 
         self.create_mask_dock()
-        self.create_mask_properties_dock() # New call to create properties dock
+        self.create_mask_properties_dock()  # New call to create properties dock
+        self.create_metadata_dock()
 
         splitter.setSizes([200, 700])
 
@@ -702,6 +868,12 @@ class MainWindow(QMainWindow):
         """Create the mask properties dock widget."""
         self.mask_properties_dock = MaskPropertiesDock(self)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.mask_properties_dock)
+
+    def create_metadata_dock(self):
+        """Create the metadata dock widget (left sidebar)."""
+        self.metadata_dock = MetadataDock(self)
+        self.metadata_dock.bind_main(self)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.metadata_dock)
 
     def create_pdf_list_panel(self, parent):
         """Create the PDF list panel."""
@@ -1112,6 +1284,9 @@ class MainWindow(QMainWindow):
 
         # Apply zoom only if user hasn't set a preference, or preserve their preference
         self.apply_zoom_preference()
+
+        if self.metadata_dock:
+            self.metadata_dock.set_context(self.current_pdf_index, self.current_page_index)
 
         # Re-apply dashed highlight for pending multi-page question segment
         if getattr(self, 'pending_question_group_id', None):
@@ -1526,15 +1701,21 @@ class MainWindow(QMainWindow):
                         f"Selected mask: {mask_id[:8]}... (Width: {width}px, Height: {height}px)"
                     )
                     self.mask_properties_dock.update_properties(mask_item)
+                    # Update metadata dock for image mask option edits
+                    self._update_metadata_dock_mask(mask_id)
                 else:
                     self.status_bar.showMessage(f"Selected mask: {mask_id[:8]}...")
                     self.mask_properties_dock.update_properties(None) # Should not happen if mask_id is valid
             elif selected_count > 1:
                 self.status_bar.showMessage(f"Selected {selected_count} masks")
                 self.mask_properties_dock.update_properties(None) # Clear properties for multi-selection
+                if self.metadata_dock:
+                    self.metadata_dock.update_mask_selection(None)
             else:
                 self.status_bar.showMessage("No mask selected", 3000)
                 self.mask_properties_dock.update_properties(None) # Clear properties for no selection
+                if self.metadata_dock:
+                    self.metadata_dock.update_mask_selection(None)
         
         can_merge = selected_count >= 2
         self.merge_masks_btn.setEnabled(can_merge)
@@ -1582,15 +1763,22 @@ class MainWindow(QMainWindow):
                     f"Selected mask: {selected_mask_item.mask_id[:8]}... (Width: {width}px, Height: {height}px)"
                 )
                 self.mask_properties_dock.update_properties(selected_mask_item)
+                self._update_metadata_dock_mask(selected_mask_item.mask_id)
             else:
                 self.status_bar.showMessage("No mask selected", 3000) # Should not happen
                 self.mask_properties_dock.update_properties(None)
+                if self.metadata_dock:
+                    self.metadata_dock.update_mask_selection(None)
         elif selected_count > 1:
             self.status_bar.showMessage(f"Selected {selected_count} masks")
             self.mask_properties_dock.update_properties(None) # Clear properties for multi-selection
+            if self.metadata_dock:
+                self.metadata_dock.update_mask_selection(None)
         else:
             self.status_bar.showMessage("No mask selected", 3000)
             self.mask_properties_dock.update_properties(None) # Clear properties for no selection
+            if self.metadata_dock:
+                self.metadata_dock.update_mask_selection(None)
 
         can_merge = selected_count >= 2
         self.merge_masks_btn.setEnabled(can_merge)
@@ -1609,6 +1797,18 @@ class MainWindow(QMainWindow):
             view.ensureVisible(selected_mask_item)
 
         self.page_scene.blockSignals(False)
+
+    def _update_metadata_dock_mask(self, mask_id: str):
+        if not self.metadata_dock:
+            return
+        pdf_path, state = self.pdf_states[self.current_pdf_index]
+        page_key = str(self.current_page_index + 1)
+        mask_data = None
+        for m in state.get("pages", {}).get(page_key, {}).get("masks", []):
+            if m.get("id") == mask_id:
+                mask_data = m
+                break
+        self.metadata_dock.update_mask_selection(mask_data)
 
     def _get_bounding_box_from_points(self, points: List[List[float]]) -> QRectF:
         """

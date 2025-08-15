@@ -3,7 +3,7 @@ import os
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 
 try:
     import fitz  # PyMuPDF
@@ -61,6 +61,9 @@ def create_initial_state(pdf_path: str, page_count: int) -> Dict[str, Any]:
     Dict[str, Any]
         Initial state dictionary
     """
+    # Try to extract minimal PDF metadata from the filename
+    pdf_metadata = extract_pdf_metadata_from_filename(pdf_path)
+
     return {
         "page_count": page_count,
         "pages": {
@@ -69,7 +72,8 @@ def create_initial_state(pdf_path: str, page_count: int) -> Dict[str, Any]:
                 "masks": []
             }
             for i in range(page_count)
-        }
+        },
+        **({"pdf_metadata": pdf_metadata} if pdf_metadata else {})
     }
 
 
@@ -141,6 +145,23 @@ def load_state(pdf_path: str) -> Dict[str, Any]:
             with open(json_path, 'r', encoding='utf-8') as f:
                 state = json.load(f)
                 migrated_state = migrate_old_state_format(state)
+
+                # Ensure top-level pdf_metadata exists and is minimally populated
+                if "pdf_metadata" not in migrated_state:
+                    meta = extract_pdf_metadata_from_filename(pdf_path)
+                    if meta:
+                        migrated_state["pdf_metadata"] = meta
+
+                # Backfill image mask fields if missing (non-destructive)
+                for p_data in migrated_state.get("pages", {}).values():
+                    for m in p_data.get("masks", []):
+                        m_type = m.get("type", "image")
+                        if m_type == "image":
+                            if "option_label" not in m:
+                                m["option_label"] = ""
+                            if "option_label_checked" not in m:
+                                m["option_label_checked"] = False
+
                 if migrated_state != state:
                     save_state(pdf_path, migrated_state)
                 return migrated_state
@@ -242,6 +263,12 @@ def create_mask(points: List[List[float]], mask_type: str = "image", associated_
         mask["question_id"] = question_id
     if mask_type == "question":
         mask["associated_image_ids"] = associated_image_ids or []
+    else:
+        # Default framework fields for image masks
+        if "option_label" not in mask:
+            mask["option_label"] = ""
+        if "option_label_checked" not in mask:
+            mask["option_label_checked"] = False
     return mask
 
 
@@ -367,3 +394,47 @@ def unapprove_page(state: Dict[str, Any], page_num: int) -> None:
         raise ValueError(f"Page {page_num} does not exist in state")
     
     state["pages"][page_key]["approved"] = False
+
+
+def extract_pdf_metadata_from_filename(pdf_path: str) -> Optional[Dict[str, Any]]:
+    """Extract minimal PDF metadata (year, grade_group) from filename.
+
+    Parameters
+    ----------
+    pdf_path : str
+        Path to the PDF file
+
+    Returns
+    -------
+    Optional[Dict[str, Any]]
+        Dictionary with keys 'year' (int) and 'grade_group' (str, e.g., '5-6'), or None if parse fails.
+    """
+    try:
+        basename = os.path.basename(pdf_path)
+        stem = os.path.splitext(basename)[0]
+        parts = stem.split("_")
+        if len(parts) < 2:
+            return None
+        yy = parts[0]
+        grade_code = parts[1]
+
+        if not yy.isdigit():
+            return None
+        year_ending = int(yy)
+        # Heuristic: map 90-99 to 1900s, others to 2000s
+        year = 1900 + year_ending if year_ending >= 90 else 2000 + year_ending
+
+        grade_map = {
+            "34": "3-4",
+            "56": "5-6",
+            "78": "7-8",
+            "910": "9-10",
+            "1113": "11-13",
+        }
+        grade_group = grade_map.get(grade_code)
+        if not grade_group:
+            return None
+
+        return {"year": year, "grade_group": grade_group}
+    except Exception:
+        return None
