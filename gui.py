@@ -1247,8 +1247,8 @@ class MainWindow(QMainWindow):
 
         _, state = self.pdf_states[self.current_pdf_index]
         if self.current_page_index > 0:
-            self.current_page_index -= 1
-            self.update_display()
+            if self._try_switch_page(self.current_page_index - 1):
+                self.update_display()
 
     def next_page(self):
         """Navigate to the next page."""
@@ -1257,8 +1257,8 @@ class MainWindow(QMainWindow):
 
         _, state = self.pdf_states[self.current_pdf_index]
         if self.current_page_index < state["page_count"] - 1:
-            self.current_page_index += 1
-            self.update_display()
+            if self._try_switch_page(self.current_page_index + 1):
+                self.update_display()
 
     def zoom_in(self):
         """Zoom in the graphics view."""
@@ -1314,6 +1314,78 @@ class MainWindow(QMainWindow):
             # Get the current scene rect and apply similar transform
             if self.page_scene.sceneRect().isValid():
                 self.graphics_view.setTransform(self.manual_zoom_transform)
+
+    def _check_floating_masks(self, page_data: Dict[str, Any]) -> bool:
+        """
+        Check if there are both image and question masks on the page, and if any image masks
+        are not associated with any question.
+
+        Parameters
+        ----------
+        page_data : Dict[str, Any]
+            Data for the page to check
+
+        Returns
+        -------
+        bool
+            True if there are floating image masks, False otherwise
+        """
+        # Get all masks on the page
+        masks = page_data.get("masks", [])
+        if not masks:
+            return False
+
+        # Count image and question masks
+        image_masks = set(m["id"] for m in masks if m.get("type", "image") == "image")
+        question_masks = [m for m in masks if m.get("type") == "question"]
+
+        # If there are no image masks or no question masks, no floating masks possible
+        if not image_masks or not question_masks:
+            return False
+
+        # Get all associated image IDs
+        associated_images = set()
+        for q_mask in question_masks:
+            associated_images.update(q_mask.get("associated_image_ids", []))
+
+        # Check if any image masks are not associated with any question
+        return any(img_id not in associated_images for img_id in image_masks)
+
+    def _try_switch_page(self, new_index: int) -> bool:
+        """
+        Try to switch to a new page index, checking for floating masks first.
+
+        Parameters
+        ----------
+        new_index : int
+            The index of the page to switch to
+
+        Returns
+        -------
+        bool
+            True if the switch was successful or approved, False if cancelled
+        """
+        if not self.pdf_states:
+            return False
+
+        # Check current page for floating masks before switching
+        pdf_path, state = self.pdf_states[self.current_pdf_index]
+        current_page_key = str(self.current_page_index + 1)
+        if current_page_key in state["pages"]:
+            if self._check_floating_masks(state["pages"][current_page_key]):
+                reply = QMessageBox.warning(
+                    self,
+                    "Floating Image Masks",
+                    "Some image masks on this page are not associated with any question. "
+                    "Do you want to proceed anyway?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No
+                )
+                if reply == QMessageBox.StandardButton.No:
+                    return False
+
+        self.current_page_index = new_index
+        return True
 
     def update_display(self):
         """Update the display with the current page."""
