@@ -726,36 +726,29 @@ class MetadataDock(QDockWidget):
 
         storage.save_state(pdf_path, state)
 
-        # Update the option label display in the scene
+        # Update the option label display in the scene without changing selection
         if selected_mask_id in self._main.page_scene.current_masks:
             mask_item = self._main.page_scene.current_masks[selected_mask_id]
             if hasattr(mask_item, 'update_option_label'):
                 mask_item.update_option_label(new_label)
 
-        # Refresh mask list but preserve selection
-        self._main.update_mask_list()
-
-        # Re-select the mask in the list
-        for i in range(self._main.mask_list_widget.count()):
-            item = self._main.mask_list_widget.item(i)
-            if item.data(Qt.ItemDataRole.UserRole) == selected_mask_id:
-                item.setSelected(True)
-                self._main.mask_list_widget.scrollToItem(item)
-                break
-
-        # Re-select the mask in the scene if present
-        if selected_mask_id in self._main.page_scene.current_masks:
-            self._main.page_scene.blockSignals(True)
-            try:
-                self._main.page_scene.current_masks[selected_mask_id].setSelected(True)
-            finally:
-                self._main.page_scene.blockSignals(False)
-
-        # Reload the saved mask into the dock controls (blocks signals when setting combo)
-        for m in page.get("masks", []):
-            if m.get("id") == selected_mask_id:
-                self.update_mask_selection(m)
-                break
+        # Quietly update mask list without affecting selection
+        self._main.mask_list_widget.blockSignals(True)
+        try:
+            currently_selected = self._main.mask_list_widget.selectedItems()
+            self._main.update_mask_list()
+            # Restore any previously selected items
+            for item in currently_selected:
+                if isinstance(item, QListWidgetItem):
+                    item_id = item.data(Qt.ItemDataRole.UserRole)
+                    # Find and reselect the item with the same ID
+                    for i in range(self._main.mask_list_widget.count()):
+                        new_item = self._main.mask_list_widget.item(i)
+                        if new_item.data(Qt.ItemDataRole.UserRole) == item_id:
+                            new_item.setSelected(True)
+                            break
+        finally:
+            self._main.mask_list_widget.blockSignals(False)
 
         self._main.status_bar.showMessage("Mask option saved.", 3000)
 
