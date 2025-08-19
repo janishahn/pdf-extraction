@@ -95,9 +95,12 @@ class MaskItem(QGraphicsPolygonItem):
             if self.isSelected():
                 self.setBrush(self.selected_brush)
                 self.setPen(self.selected_pen)
-                # Notify scene that selection changed
+                # Notify scene about selection change to sync UI (metadata dock, list)
                 if self.scene() and hasattr(self.scene(), 'on_mask_selection_changed'):
-                    self.scene().on_mask_selection_changed(self)
+                    try:
+                        self.scene().on_mask_selection_changed(self)  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
             else:
                 self.setBrush(self.default_brush)
                 self.setPen(self.default_pen)
@@ -253,21 +256,25 @@ class PageScene(QGraphicsScene):
             self.mask_selected.emit("")
 
     def set_mode(self, mode: int):
+        """Set the scene mode and update cursor and item flags accordingly."""
         self.mode = mode
         self.cancel_current_drawing()
 
-        if self.mode == self.MODE_SELECT:
-            for item in self.items():
-                if isinstance(item, EditableMaskItem):
-                    item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
-            if self.views():
-                self.views()[0].setCursor(Qt.CursorShape.ArrowCursor)
-        elif self.mode == self.MODE_DRAW:
-            for item in self.items():
-                if isinstance(item, EditableMaskItem):
-                    item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
-            if self.views():
-                self.views()[0].setCursor(Qt.CursorShape.CrossCursor)
+        if self.views():
+            view = self.views()[0]
+            
+            if self.mode == self.MODE_SELECT:
+                view.setCursor(Qt.CursorShape.ArrowCursor)
+                view.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
+                for item in self.items():
+                    if isinstance(item, EditableMaskItem):
+                        item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
+            elif self.mode == self.MODE_DRAW:
+                view.setCursor(Qt.CursorShape.CrossCursor)
+                view.setDragMode(QGraphicsView.DragMode.NoDrag)
+                for item in self.items():
+                    if isinstance(item, EditableMaskItem):
+                        item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
 
     def cancel_current_drawing(self):
         """Cancel the current drawing operation and remove any temporary rectangle."""
@@ -658,27 +665,29 @@ class MetadataDock(QDockWidget):
             self.load_pdf_metadata(state)
 
     def update_mask_selection(self, mask_data: Optional[Dict[str, Any]]):
+        # Always reset state first
+        self._current_mask_id = None
+        self._current_mask_type = None
+        self._update_mask_controls_enabled(False)
+        self.option_combo.blockSignals(True)
+        self.option_combo.setCurrentIndex(0)
+        self.option_combo.blockSignals(False)
+        self.option_checked.setChecked(False)
+
         if not mask_data or mask_data.get("type", "image") != "image":
-            self._current_mask_id = None
-            self._current_mask_type = None
-            self._update_mask_controls_enabled(False)
-            # Block signals while clearing to avoid accidental saves
-            self.option_combo.blockSignals(True)
-            self.option_combo.setCurrentIndex(0)
-            self.option_combo.blockSignals(False)
-            self.option_checked.setChecked(False)
             return
 
-        # Populate controls from mask data without emitting save
+        # Only proceed if we have valid image mask data
         self._current_mask_id = mask_data["id"]
         self._current_mask_type = "image"
+
+        # Update the UI with the new mask's data
         label = mask_data.get("option_label", "")
         idx = self.option_combo.findText(label)
-        # Prevent programmatic change from emitting the save slot
         self.option_combo.blockSignals(True)
         self.option_combo.setCurrentIndex(idx if idx >= 0 else 0)
         self.option_combo.blockSignals(False)
-        # Only set the checkbox to the stored value; do not flip it here
+        
         self.option_checked.setChecked(bool(mask_data.get("option_label_checked", False)))
         self._update_mask_controls_enabled(True)
 
@@ -700,55 +709,64 @@ class MetadataDock(QDockWidget):
         """Save the selected option label immediately.
 
         Only set `option_label_checked` to True when the label actually changes;
-        otherwise leave the checked state unchanged. Preserve UI selection.
+        otherwise leave the checked state unchanged.
         """
         if not self._main or self._current_pdf_index is None or self._current_page_index is None:
             return
         if not self._current_mask_id:
             return
+
         pdf_path, state = self._main.pdf_states[self._current_pdf_index]
         page_key = str(self._current_page_index + 1)
         page = state.get("pages", {}).get(page_key)
         if not page:
             return
 
-        selected_mask_id = self._current_mask_id
+        # Get currently selected mask from scene
+        selected_scene_items = self._main.page_scene.selectedItems()
+        selected_mask_items = [item for item in selected_scene_items 
+                             if hasattr(item, 'mask_id') and hasattr(item, 'mask_type') 
+                             and item.mask_type == "image"]
+
+        # Verify we're modifying the currently selected mask
+        if not selected_mask_items or selected_mask_items[0].mask_id != self._current_mask_id:
+            self._main.status_bar.showMessage("Cannot save option: Selection mismatch", 3000)
+            return
+
+        # Find and update the mask in the state
         for m in page.get("masks", []):
-            if m.get("id") == selected_mask_id and m.get("type", "image") == "image":
+            if m.get("id") == self._current_mask_id and m.get("type", "image") == "image":
                 old_label = m.get("option_label", "")
                 new_label = self.option_combo.currentText()
                 m["option_label"] = new_label
-                # Only mark checked when label actually changed
                 if new_label != old_label:
                     m["option_label_checked"] = True
-                # Do not overwrite m["option_label_checked"] when label unchanged
                 break
+        else:
+            return  # Mask not found
 
         storage.save_state(pdf_path, state)
 
-        # Update the option label display in the scene without changing selection
-        if selected_mask_id in self._main.page_scene.current_masks:
-            mask_item = self._main.page_scene.current_masks[selected_mask_id]
+        # Update the visual representation
+        if self._current_mask_id in self._main.page_scene.current_masks:
+            mask_item = self._main.page_scene.current_masks[self._current_mask_id]
             if hasattr(mask_item, 'update_option_label'):
                 mask_item.update_option_label(new_label)
 
-        # Quietly update mask list without affecting selection
+        # Update the list widget without affecting selection
+        selected_ids = {item.mask_id for item in selected_mask_items}
         self._main.mask_list_widget.blockSignals(True)
         try:
-            currently_selected = self._main.mask_list_widget.selectedItems()
             self._main.update_mask_list()
-            # Restore any previously selected items
-            for item in currently_selected:
-                if isinstance(item, QListWidgetItem):
-                    item_id = item.data(Qt.ItemDataRole.UserRole)
-                    # Find and reselect the item with the same ID
-                    for i in range(self._main.mask_list_widget.count()):
-                        new_item = self._main.mask_list_widget.item(i)
-                        if new_item.data(Qt.ItemDataRole.UserRole) == item_id:
-                            new_item.setSelected(True)
-                            break
+            # Restore selection
+            for i in range(self._main.mask_list_widget.count()):
+                item = self._main.mask_list_widget.item(i)
+                if item.data(Qt.ItemDataRole.UserRole) in selected_ids:
+                    item.setSelected(True)
         finally:
             self._main.mask_list_widget.blockSignals(False)
+
+        self._main.status_bar.showMessage("Option label saved.", 3000)
 
         self._main.status_bar.showMessage("Mask option saved.", 3000)
 
@@ -1585,8 +1603,12 @@ class MainWindow(QMainWindow):
             self.current_draw_type = mask_type
             self.is_continuous_draw_mode = True
             self.page_scene.set_mode(PageScene.MODE_DRAW)
+            
+            # Ensure proper cursor and drag mode
+            self.graphics_view.setCursor(Qt.CursorShape.CrossCursor)
             self.graphics_view.setDragMode(QGraphicsView.DragMode.NoDrag)
 
+            # Update action states
             current_action.setChecked(True)
             other_action.setChecked(False)
             self.select_mode_action.setChecked(False)
@@ -1596,8 +1618,12 @@ class MainWindow(QMainWindow):
             # Deactivate draw mode – switch to select
             self.is_continuous_draw_mode = False
             self.page_scene.set_mode(PageScene.MODE_SELECT)
+            
+            # Reset cursor and drag mode
+            self.graphics_view.setCursor(Qt.CursorShape.ArrowCursor)
             self.graphics_view.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
 
+            # Update action states
             current_action.setChecked(False)
             self.select_mode_action.setChecked(True)
 
@@ -1791,13 +1817,14 @@ class MainWindow(QMainWindow):
     def on_mask_selected_in_scene(self, mask_id: str):
         """Handle mask selection from the scene and update list selection."""
         self.mask_list_widget.blockSignals(True)
+        selected_id = mask_id  # Preserve the actual selected id from the signal
         
         # First clear any existing associated highlights
         for mask in self.page_scene.current_masks.values():
             if hasattr(mask, 'clear_associated_display'):
                 mask.clear_associated_display()
         
-        if mask_id == "": # No mask selected, clear all selections
+        if selected_id == "": # No mask selected, clear all selections
             self.mask_list_widget.clearSelection()
             self.status_bar.showMessage("No mask selected", 3000)
             selected_count = 0 # No masks selected
@@ -1827,26 +1854,26 @@ class MainWindow(QMainWindow):
                 
                 # Then find all associated masks
                 for mask in page_data.get("masks", []):
-                    mask_id = mask.get("id")
-                    mask_type = mask.get("type", "image")
+                    m_id = mask.get("id")
+                    m_type = mask.get("type", "image")
                     
-                    if mask_type == "question":
+                    if m_type == "question":
                         # If this question mask is selected, add its associated images
-                        if mask_id in selected_question_ids:
+                        if m_id in selected_question_ids:
                             for img_id in mask.get("associated_image_ids", []):
                                 if img_id not in selected_image_ids:
                                     associated_image_ids.add(img_id)
                         # If any of this question's images are selected, add the question
                         elif any(img_id in selected_image_ids for img_id in mask.get("associated_image_ids", [])):
-                            associated_question_ids.add(mask_id)
+                            associated_question_ids.add(m_id)
             
             selected_count = len(selected_mask_ids)
             self.mask_list_widget.clearSelection()
 
             # Highlight associated masks in the scene
-            for mask_id in associated_image_ids.union(associated_question_ids):
-                if mask_id in self.page_scene.current_masks:
-                    mask_item = self.page_scene.current_masks[mask_id]
+            for assoc_id in associated_image_ids.union(associated_question_ids):
+                if assoc_id in self.page_scene.current_masks:
+                    mask_item = self.page_scene.current_masks[assoc_id]
                     if hasattr(mask_item, 'show_as_associated'):
                         mask_item.show_as_associated()
 
@@ -1857,12 +1884,12 @@ class MainWindow(QMainWindow):
                 if item_mask_id in selected_mask_ids:
                     item.setSelected(True)
                     # Scroll to the first selected item
-                    if item_mask_id == mask_id:
+                    if item_mask_id == selected_id:
                         self.mask_list_widget.scrollToItem(item)
 
             # Update status bar based on number of selections
             if selected_count == 1:
-                mask_item = self.page_scene.current_masks.get(mask_id)
+                mask_item = self.page_scene.current_masks.get(selected_id)
                 if mask_item:
                     # Rectangle masks expose rect(); polygon masks use sceneBoundingRect()
                     if hasattr(mask_item, 'rect'):
@@ -1877,13 +1904,13 @@ class MainWindow(QMainWindow):
                     associated_text = f" ({total_associated} associated masks)" if total_associated > 0 else ""
                     
                     self.status_bar.showMessage(
-                        f"Selected mask: {mask_id[:8]}... (Width: {width}px, Height: {height}px){associated_text}"
+                        f"Selected mask: {selected_id[:8]}... (Width: {width}px, Height: {height}px){associated_text}"
                     )
                     self.mask_properties_dock.update_properties(mask_item)
                     # Update metadata dock for image mask option edits
-                    self._update_metadata_dock_mask(mask_id)
+                    self._update_metadata_dock_mask(selected_id)
                 else:
-                    self.status_bar.showMessage(f"Selected mask: {mask_id[:8]}...")
+                    self.status_bar.showMessage(f"Selected mask: {selected_id[:8]}...")
                     self.mask_properties_dock.update_properties(None) # Should not happen if mask_id is valid
             elif selected_count > 1:
                 self.status_bar.showMessage(f"Selected {selected_count} masks")
