@@ -1741,6 +1741,11 @@ class MainWindow(QMainWindow):
         """Handle mask selection from the scene and update list selection."""
         self.mask_list_widget.blockSignals(True)
         
+        # First clear any existing associated highlights
+        for mask in self.page_scene.current_masks.values():
+            if hasattr(mask, 'clear_associated_display'):
+                mask.clear_associated_display()
+        
         if mask_id == "": # No mask selected, clear all selections
             self.mask_list_widget.clearSelection()
             self.status_bar.showMessage("No mask selected", 3000)
@@ -1749,18 +1754,52 @@ class MainWindow(QMainWindow):
             # Get all currently selected items in the scene
             selected_scene_items = self.page_scene.selectedItems()
             selected_mask_ids = []
-            for item in selected_scene_items:
-                # Accept any mask-like item that exposes a mask_id attribute
-                if hasattr(item, 'mask_id'):
-                    try:
+            
+            # Find all associated masks for the selected masks
+            associated_image_ids = set()
+            associated_question_ids = set()
+            _, state = self.pdf_states[self.current_pdf_index]
+            page_key = str(self.current_page_index + 1)
+            if page_key in state["pages"]:
+                page_data = state["pages"][page_key]
+                
+                # First collect all selected mask IDs and their types
+                selected_image_ids = set()
+                selected_question_ids = set()
+                for item in selected_scene_items:
+                    if hasattr(item, 'mask_id') and hasattr(item, 'mask_type'):
                         selected_mask_ids.append(item.mask_id)
-                    except Exception:
-                        continue
+                        if item.mask_type == "image":
+                            selected_image_ids.add(item.mask_id)
+                        else:  # question
+                            selected_question_ids.add(item.mask_id)
+                
+                # Then find all associated masks
+                for mask in page_data.get("masks", []):
+                    mask_id = mask.get("id")
+                    mask_type = mask.get("type", "image")
+                    
+                    if mask_type == "question":
+                        # If this question mask is selected, add its associated images
+                        if mask_id in selected_question_ids:
+                            for img_id in mask.get("associated_image_ids", []):
+                                if img_id not in selected_image_ids:
+                                    associated_image_ids.add(img_id)
+                        # If any of this question's images are selected, add the question
+                        elif any(img_id in selected_image_ids for img_id in mask.get("associated_image_ids", [])):
+                            associated_question_ids.add(mask_id)
+            
             selected_count = len(selected_mask_ids)
-
             self.mask_list_widget.clearSelection()
 
-            # Select corresponding items in the list
+            # Highlight associated masks in the scene
+            for mask_id in associated_image_ids.union(associated_question_ids):
+                if mask_id in self.page_scene.current_masks:
+                    mask_item = self.page_scene.current_masks[mask_id]
+                    if hasattr(mask_item, 'show_as_associated'):
+                        mask_item.show_as_associated()
+
+            # Select corresponding items in the list and show selection
             for i in range(self.mask_list_widget.count()):
                 item = self.mask_list_widget.item(i)
                 item_mask_id = item.data(Qt.ItemDataRole.UserRole)
@@ -1781,8 +1820,13 @@ class MainWindow(QMainWindow):
                         bbox = mask_item.sceneBoundingRect()
                     width = round(bbox.width())
                     height = round(bbox.height())
+                    
+                    # Add associated mask count to the status message
+                    total_associated = len(associated_image_ids) + len(associated_question_ids)
+                    associated_text = f" ({total_associated} associated masks)" if total_associated > 0 else ""
+                    
                     self.status_bar.showMessage(
-                        f"Selected mask: {mask_id[:8]}... (Width: {width}px, Height: {height}px)"
+                        f"Selected mask: {mask_id[:8]}... (Width: {width}px, Height: {height}px){associated_text}"
                     )
                     self.mask_properties_dock.update_properties(mask_item)
                     # Update metadata dock for image mask option edits
@@ -1816,12 +1860,51 @@ class MainWindow(QMainWindow):
 
     def on_mask_list_selection_changed(self):
         """Sync scene selection from mask list selection."""
-        selected_list_items = self.mask_list_widget.selectedItems()
+        # First clear any existing associated highlights
+        for mask in self.page_scene.current_masks.values():
+            if hasattr(mask, 'clear_associated_display'):
+                mask.clear_associated_display()
         
+        selected_list_items = self.mask_list_widget.selectedItems()
         selected_mask_ids = [item.data(Qt.ItemDataRole.UserRole) for item in selected_list_items]
 
         self.page_scene.blockSignals(True)
         self.page_scene.clearSelection()
+
+        # Get current page state to find associations
+        _, state = self.pdf_states[self.current_pdf_index]
+        page_key = str(self.current_page_index + 1)
+        associated_image_ids = set()
+        associated_question_ids = set()
+
+        if page_key in state["pages"]:
+            page_data = state["pages"][page_key]
+            
+            # First identify selected image and question masks
+            selected_image_ids = set()
+            selected_question_ids = set()
+            for mask_id in selected_mask_ids:
+                mask_item = self.page_scene.current_masks.get(mask_id)
+                if mask_item:
+                    if mask_item.mask_type == "image":
+                        selected_image_ids.add(mask_id)
+                    else:  # question
+                        selected_question_ids.add(mask_id)
+            
+            # Then find all associated masks
+            for mask in page_data.get("masks", []):
+                mask_id = mask.get("id")
+                mask_type = mask.get("type", "image")
+                
+                if mask_type == "question":
+                    # If this question mask is selected, add its associated images
+                    if mask_id in selected_question_ids:
+                        for img_id in mask.get("associated_image_ids", []):
+                            if img_id not in selected_image_ids:
+                                associated_image_ids.add(img_id)
+                    # If any of this question's images are selected, add the question
+                    elif any(img_id in selected_image_ids for img_id in mask.get("associated_image_ids", [])):
+                        associated_question_ids.add(mask_id)
 
         # Select all corresponding masks in the scene
         selected_count = 0
@@ -1833,6 +1916,13 @@ class MainWindow(QMainWindow):
                 selected_count += 1
                 if selected_count == 1: # Keep track of the first selected item for properties display
                     selected_mask_item = mask_item
+        
+        # Highlight associated masks
+        for mask_id in associated_image_ids.union(associated_question_ids):
+            if mask_id in self.page_scene.current_masks:
+                mask_item = self.page_scene.current_masks[mask_id]
+                if hasattr(mask_item, 'show_as_associated'):
+                    mask_item.show_as_associated()
 
         # Update status bar and properties dock based on number of selections
         if selected_count == 1:
@@ -1843,8 +1933,13 @@ class MainWindow(QMainWindow):
                     rect = selected_mask_item.sceneBoundingRect()
                 width = round(rect.width())
                 height = round(rect.height())
+                
+                # Add associated mask count to the status message
+                total_associated = len(associated_image_ids) + len(associated_question_ids)
+                associated_text = f" ({total_associated} associated masks)" if total_associated > 0 else ""
+                
                 self.status_bar.showMessage(
-                    f"Selected mask: {selected_mask_item.mask_id[:8]}... (Width: {width}px, Height: {height}px)"
+                    f"Selected mask: {selected_mask_item.mask_id[:8]}... (Width: {width}px, Height: {height}px){associated_text}"
                 )
                 self.mask_properties_dock.update_properties(selected_mask_item)
                 self._update_metadata_dock_mask(selected_mask_item.mask_id)

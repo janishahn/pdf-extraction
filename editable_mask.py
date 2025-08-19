@@ -170,9 +170,12 @@ class EditableMaskItem(QGraphicsRectItem):
 
         self.default_brush = QBrush(QColor(base_color.red(), base_color.green(), base_color.blue(), 100))
         self.hover_brush = QBrush(QColor(base_color.red(), base_color.green(), base_color.blue(), 150))
-        self.selected_brush = QBrush(QColor(255, 165, 0, 180))
+        self.selected_brush = QBrush(QColor(255, 165, 0, 180))  # Orange for primary selection
+        self.associated_brush = QBrush(QColor(255, 215, 0, 130))  # Gold for associated selection
+        
         self.default_pen = QPen(base_color, 1)
         self.selected_pen = QPen(QColor(255, 165, 0), 2.5)
+        self.associated_pen = QPen(QColor(255, 215, 0), 2)  # Gold pen for associated items
         
         self.setBrush(self.default_brush)
         self.setPen(self.default_pen)
@@ -181,6 +184,9 @@ class EditableMaskItem(QGraphicsRectItem):
         self._create_handles()
         self._update_handle_positions()
         self._set_handles_visible(False)
+        
+        # Track if this mask is being shown as associated
+        self.is_showing_as_associated = False
     
     def _create_handles(self):
         """Create edge handles for resizing."""
@@ -266,14 +272,18 @@ class EditableMaskItem(QGraphicsRectItem):
     def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value: Any) -> Any:
         if change == QGraphicsItem.GraphicsItemChange.ItemSelectedHasChanged:
             if self.isSelected():
+                # Primary selection
                 self.setBrush(self.selected_brush)
                 self.setPen(self.selected_pen)
                 self._set_handles_visible(True)
+                self.is_showing_as_associated = False
                 if self.scene() and hasattr(self.scene(), 'on_mask_selection_changed'):
                     self.scene().on_mask_selection_changed(self)
             else:
-                self.setBrush(self.default_brush)
-                self.setPen(self.default_pen)
+                # Clear selection highlighting
+                if not self.is_showing_as_associated:
+                    self.setBrush(self.default_brush)
+                    self.setPen(self.default_pen)
                 self._set_handles_visible(False)
         elif change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged:
             self._update_handle_positions()
@@ -282,12 +292,12 @@ class EditableMaskItem(QGraphicsRectItem):
         return super().itemChange(change, value)
     
     def hoverEnterEvent(self, event) -> None:
-        if not self.isSelected():
+        if not self.isSelected() and not self.is_showing_as_associated:
             self.setBrush(self.hover_brush)
         super().hoverEnterEvent(event)
     
     def hoverLeaveEvent(self, event) -> None:
-        if not self.isSelected():
+        if not self.isSelected() and not self.is_showing_as_associated:
             self.setBrush(self.default_brush)
         super().hoverLeaveEvent(event)
     
@@ -303,6 +313,21 @@ class EditableMaskItem(QGraphicsRectItem):
         y1 = rect.bottom() + pos.y()
         
         return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+    
+    def show_as_associated(self):
+        """Highlight this mask as being associated with the selected mask."""
+        if not self.isSelected():  # Only modify appearance if not primarily selected
+            self.setBrush(self.associated_brush)
+            self.setPen(self.associated_pen)
+            self.is_showing_as_associated = True
+            self._set_handles_visible(False)  # Associated items don't show handles
+    
+    def clear_associated_display(self):
+        """Clear the associated highlight if it was being shown."""
+        if self.is_showing_as_associated and not self.isSelected():
+            self.setBrush(self.default_brush)
+            self.setPen(self.default_pen)
+            self.is_showing_as_associated = False
     
     def update_option_label(self, option_label: str):
         """Update the option label display for image masks."""
