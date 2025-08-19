@@ -30,6 +30,7 @@ python app.py ~/Documents/my_pdfs
 
 - **Interactive PDF Viewing**: Navigate through multiple PDFs and pages with smooth rendering
 - **Rectangle Mask Creation**: Draw rectangular masks over PDF content using drag-and-drop, or automatically generate masks from vector graphics
+- **Automatic Option Label Detection**: Uses local OCR (PyTesseract by default) to automatically detect option labels (A-E) in image masks for multiple choice questions
 - **Mask Editing**: Move, resize using edge handles, and delete masks with visual feedback
 - **Page Approval Workflow**: Systematic approval process for quality control
 - **Batch Export**: Export all approved masks to PNG files with metadata
@@ -95,6 +96,29 @@ The application window consists of four main areas:
 3. **Auto-Navigation**: The tool automatically moves to the next unapproved page
 4. **Status Tracking**: PDF list shows approval progress (e.g., "✓ document.pdf (3/5)")
 5. **Bulk Approval**: Click "Accept All Pages" to approve all pages in the current PDF.
+
+### Automatic Option Label Detection
+
+The application includes intelligent OCR-based option label detection for multiple choice exam papers:
+
+#### How It Works
+1. **Automatic Processing**: When you open/switch to a PDF, the system automatically processes all unchecked image masks
+2. **OCR Analysis**: Each image mask is rendered and processed using PaddleOCR 3.0 to extract text
+3. **Pattern Recognition**: The system searches for option labels in parentheses: `(A)`, `(B)`, `(C)`, `(D)`, `(E)`
+4. **Label Assignment**: Detected labels are automatically assigned to the corresponding masks
+5. **Progress Tracking**: A modal progress dialog shows processing status
+
+#### Manual Control
+- **Toolbar Button**: Click "Detect Option Labels" to manually trigger OCR processing
+- **Overwrite Confirmation**: Manual processing asks for confirmation before overwriting existing labels
+- **Metadata Panel**: View and manually edit option labels in the left sidebar when an image mask is selected
+
+#### Technical Details
+- **Input**: Cropped image regions from PDF masks at 300 DPI
+- **OCR Engine**: PaddleOCR 3.0 with English language support and angle classification
+- **Output**: Text recognition results with confidence scores, filtered for option patterns
+- **Parallel Processing**: Uses ThreadPoolExecutor for faster processing of multiple masks
+- **State Tracking**: `option_label_checked` field prevents reprocessing of already analyzed masks
 
 ### Export Process
 
@@ -201,6 +225,8 @@ output/
 - **PyQt6**: Modern GUI framework
 - **PyMuPDF (fitz)**: PDF rendering and processing
 - **Pillow**: Image processing and export
+- **PaddlePaddle**: Deep learning framework for OCR
+- **PaddleOCR**: OCR engine for automatic option label detection
 - **Python 3.8+**: Core runtime
 
 ### Core Modules

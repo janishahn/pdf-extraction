@@ -6,6 +6,10 @@ import vector_bbox
 import question_bbox
 from editable_mask import EditableMaskItem
 from shapely.geometry import Polygon, box, LineString
+import option_label_ocr
+
+# Rendering DPI used throughout the application for PDF rasterization
+RENDER_DPI = 300
 
 try:
     import fitz  # PyMuPDF
@@ -20,10 +24,11 @@ try:
         QSplitter, QGraphicsView, QGraphicsScene, QStatusBar,
         QMessageBox, QMenuBar, QDialog, QTextEdit, QDockWidget,
         QToolBar, QGraphicsPolygonItem, QGraphicsItem, QGraphicsRectItem,
-        QApplication, QFileDialog, QAbstractItemView, QFormLayout, QComboBox, QSpinBox, QCheckBox, QLineEdit
+        QApplication, QFileDialog, QAbstractItemView, QFormLayout, QComboBox, QSpinBox, QCheckBox, QLineEdit,
+        QProgressDialog, QGraphicsTextItem
     )
-    from PyQt6.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer
-    from PyQt6.QtGui import QPixmap, QImage, QShortcut, QKeySequence, QAction, QPolygonF, QPen, QBrush, QColor, QIcon
+    from PyQt6.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer, QThread, QObject
+    from PyQt6.QtGui import QPixmap, QImage, QShortcut, QKeySequence, QAction, QPolygonF, QPen, QBrush, QColor, QIcon, QActionGroup
 except ImportError:
     print("Error: PyQt6 is required. Install with: pip install PyQt6")
     raise
@@ -44,6 +49,7 @@ class MaskItem(QGraphicsPolygonItem):
     parent : Optional[QGraphicsItem]
         Parent graphics item
     """
+
 
     def __init__(self, mask_id: str, points: List[List[float]], mask_type: str = "image", parent: Optional[QGraphicsItem] = None):
         super().__init__(parent)
@@ -71,6 +77,17 @@ class MaskItem(QGraphicsPolygonItem):
         self.setPen(self.default_pen)
 
         self.setAcceptHoverEvents(True)
+
+        # Option label overlay for image masks
+        self.option_label_display: Optional[QGraphicsTextItem] = None
+        if self.mask_type == "image":
+            from editable_mask import OptionLabelDisplay
+            self.option_label_display = OptionLabelDisplay(self)
+
+    def update_option_label(self, option_label: str):
+        """Update the option label display for image masks."""
+        if self.option_label_display and self.mask_type == "image":
+            self.option_label_display.update_label(option_label)
 
     def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value: Any) -> Any:
         if change == QGraphicsItem.GraphicsItemChange.ItemSelectedHasChanged:
@@ -156,6 +173,15 @@ class PageScene(QGraphicsScene):
                     mask_item = MaskItem(mask_data["id"], points, m_type)
                 else:
                     mask_item = EditableMaskItem(mask_data["id"], points, m_type)
+
+                # Update option label for image masks for any mask type that supports it
+                if m_type == "image" and hasattr(mask_item, 'update_option_label'):
+                    option_label = mask_data.get("option_label", "")
+                    try:
+                        mask_item.update_option_label(option_label)
+                    except Exception:
+                        # Fail silently if the mask can't update its label
+                        pass
                 self.addItem(mask_item)
                 self.current_masks[mask_data["id"]] = mask_item
 
@@ -212,11 +238,16 @@ class PageScene(QGraphicsScene):
         """Emit selection update after a brief delay to handle multi-selection."""
         selected_items = self.selectedItems()
         if selected_items:
-            # Find the most recently selected item or just pick the first one
+            # Find the most recently selected mask-like item (rect or polygon)
             for item in selected_items:
-                if isinstance(item, EditableMaskItem):
-                    self.mask_selected.emit(item.mask_id)
-                    break
+                # Accept any item that exposes a mask_id attribute
+                if hasattr(item, 'mask_id'):
+                    try:
+                        self.mask_selected.emit(item.mask_id)
+                        break
+                    except Exception:
+                        # Fallback: continue searching other items
+                        continue
         else:
             # If nothing is selected, emit a signal to clear selection in the list
             self.mask_selected.emit("")
@@ -442,6 +473,7 @@ class HelpDialog(QDialog):
         <tr><td><b>Merge Selected Masks</b></td><td>M</td></tr>
         <tr><td><b>Split Selected Mask</b></td><td>S</td></tr>
         <tr><td><b>Expand Selected Mask</b></td><td>E</td></tr>
+        <tr><td><b>Associate Images with Question</b></td><td>X or Ctrl + L</td></tr>
         </table>
 
         <h3>Approval Controls</h3>
@@ -694,6 +726,12 @@ class MetadataDock(QDockWidget):
 
         storage.save_state(pdf_path, state)
 
+        # Update the option label display in the scene
+        if selected_mask_id in self._main.page_scene.current_masks:
+            mask_item = self._main.page_scene.current_masks[selected_mask_id]
+            if hasattr(mask_item, 'update_option_label'):
+                mask_item.update_option_label(new_label)
+
         # Refresh mask list but preserve selection
         self._main.update_mask_list()
 
@@ -827,6 +865,10 @@ class MainWindow(QMainWindow):
 
         self.current_draw_type = "image"  # default draw type
         self.pending_question_group_id = None
+        
+        # OCR tracking - PDFs that have been processed automatically
+        self._pdf_ocr_done: set = set()
+        
         self.init_ui()
         self.load_first_pdf()
 
@@ -1040,8 +1082,36 @@ class MainWindow(QMainWindow):
         self.associate_action.triggered.connect(self.associate_selected_masks)
         toolbar.addAction(self.associate_action)
 
-        # Keyboard shortcut for association (Ctrl+L)
+        # Keyboard shortcuts for association (Ctrl+L and X)
         QShortcut(QKeySequence("Ctrl+L"), self, self.associate_selected_masks)
+        QShortcut(QKeySequence("X"), self, self.associate_selected_masks)
+
+        toolbar.addSeparator()
+
+        # OCR option label detection
+        self.detect_labels_action = QAction("Detect Option Labels", self)
+        self.detect_labels_action.triggered.connect(self.detect_option_labels_force)
+        toolbar.addAction(self.detect_labels_action)
+
+        toolbar.addSeparator()
+
+        # OCR Engine selection
+        ocr_engine_label = QLabel("OCR Engine:")
+        toolbar.addWidget(ocr_engine_label)
+        
+        self.ocr_engine_group = QActionGroup(self)
+        self.ocr_engine_group.setExclusive(True)
+        
+        self.paddle_ocr_action = QAction("PaddleOCR", self, checkable=True)
+        self.paddle_ocr_action.setChecked(False)
+        self.paddle_ocr_action.triggered.connect(lambda: self._set_ocr_backend_from_action("paddle"))
+        self.ocr_engine_group.addAction(self.paddle_ocr_action)
+        toolbar.addAction(self.paddle_ocr_action)
+        self.tesseract_ocr_action = QAction("Tesseract", self, checkable=True)
+        self.tesseract_ocr_action.setChecked(True)  # Default to Tesseract
+        self.tesseract_ocr_action.triggered.connect(lambda: self._set_ocr_backend_from_action("tesseract"))
+        self.ocr_engine_group.addAction(self.tesseract_ocr_action)
+        toolbar.addAction(self.tesseract_ocr_action)
 
     def create_status_bar(self):
         """Create the status bar."""
@@ -1151,6 +1221,12 @@ class MainWindow(QMainWindow):
             self.current_pdf_index = index
             self.current_page_index = 0
             self.update_display()
+            
+            # Trigger automatic OCR detection if not done before for this PDF
+            pdf_path, _ = self.pdf_states[self.current_pdf_index]
+            if pdf_path not in self._pdf_ocr_done:
+                self._pdf_ocr_done.add(pdf_path)
+                self.detect_option_labels_auto()
 
     def prev_pdf(self):
         """Navigate to the previous PDF."""
@@ -1674,8 +1750,12 @@ class MainWindow(QMainWindow):
             selected_scene_items = self.page_scene.selectedItems()
             selected_mask_ids = []
             for item in selected_scene_items:
-                if isinstance(item, EditableMaskItem):
-                    selected_mask_ids.append(item.mask_id)
+                # Accept any mask-like item that exposes a mask_id attribute
+                if hasattr(item, 'mask_id'):
+                    try:
+                        selected_mask_ids.append(item.mask_id)
+                    except Exception:
+                        continue
             selected_count = len(selected_mask_ids)
 
             self.mask_list_widget.clearSelection()
@@ -1694,9 +1774,13 @@ class MainWindow(QMainWindow):
             if selected_count == 1:
                 mask_item = self.page_scene.current_masks.get(mask_id)
                 if mask_item:
-                    rect = mask_item.rect()
-                    width = round(rect.width())
-                    height = round(rect.height())
+                    # Rectangle masks expose rect(); polygon masks use sceneBoundingRect()
+                    if hasattr(mask_item, 'rect'):
+                        bbox = mask_item.rect()
+                    else:
+                        bbox = mask_item.sceneBoundingRect()
+                    width = round(bbox.width())
+                    height = round(bbox.height())
                     self.status_bar.showMessage(
                         f"Selected mask: {mask_id[:8]}... (Width: {width}px, Height: {height}px)"
                     )
@@ -2342,3 +2426,125 @@ class MainWindow(QMainWindow):
         storage.save_state(pdf_path, state)
         self.update_display()
         self.status_bar.showMessage(f"Successfully computed question masks for {pdf_filename}.", 5000)
+
+    # ------------------------------------------------------------------
+    # OCR Option Label Detection
+    # ------------------------------------------------------------------
+
+    def detect_option_labels_auto(self):
+        """Automatically detect option labels for the current PDF (non-overwrite mode)."""
+        self._run_ocr(overwrite=False)
+
+    def detect_option_labels_force(self):
+        """Force detection of option labels with user confirmation for overwrite."""
+        reply = QMessageBox.question(
+            self,
+            "Overwrite Option Labels?",
+            "Run OCR and overwrite all existing option labels for this PDF?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self._run_ocr(overwrite=True)
+
+    def _set_ocr_backend_from_action(self, backend_name: str):
+        """Set OCR backend from toolbar action and update status bar."""
+        try:
+            if backend_name == "paddle":
+                option_label_ocr.set_backend(option_label_ocr.OCRBackend.PADDLE)
+                self.status_bar.showMessage("OCR engine switched to PaddleOCR.", 3000)
+            elif backend_name == "tesseract":
+                option_label_ocr.set_backend(option_label_ocr.OCRBackend.TESSERACT)
+                self.status_bar.showMessage("OCR engine switched to Tesseract.", 3000)
+            else:
+                self.status_bar.showMessage(f"Unknown OCR backend: {backend_name}", 3000)
+        except Exception as e:
+            QMessageBox.warning(
+                self,
+                "OCR Backend Error",
+                f"Failed to switch OCR backend to {backend_name}:\n{str(e)}"
+            )
+
+    def _run_ocr(self, overwrite: bool):
+        """Run OCR processing with progress dialog."""
+        if not self.pdf_states:
+            return
+
+        pdf_path, state = self.pdf_states[self.current_pdf_index]
+
+        # Check OCR availability before starting (force refresh for new sessions)
+        ok, err = option_label_ocr.is_available(force_refresh=True)
+        if not ok:
+            QMessageBox.warning(
+                self,
+                "OCR Unavailable",
+                f"PaddleOCR unavailable:\n{err}\n\n"
+                "Install with:\n  pip install paddlepaddle>=2.6.1\n  pip install paddleocr==3.0.0"
+            )
+            # Cache failure to suppress further attempts this session
+            self._ocr_failed = True
+            return
+        
+        try:
+            # Count total masks to process
+            total_masks = 0
+            for page_data in state.get("pages", {}).values():
+                for mask_data in page_data.get("masks", []):
+                    if mask_data.get("type", "image") == "image":
+                        if overwrite or not mask_data.get("option_label_checked", False):
+                            total_masks += 1
+
+            if total_masks == 0:
+                self.status_bar.showMessage("No image masks need OCR processing.", 3000)
+                return
+
+            # Create progress dialog
+            progress = QProgressDialog("Detecting option labels...", None, 0, total_masks, self)
+            progress.setWindowModality(Qt.WindowModality.WindowModal)
+            progress.setMinimumDuration(0)
+            progress.show()
+
+            def update_progress(current: int, total: int):
+                progress.setValue(current)
+                QApplication.processEvents()
+
+            # Run OCR processing
+            changed = option_label_ocr.process_pdf(pdf_path, state, overwrite, update_progress)
+
+            progress.close()
+
+            if changed:
+                storage.save_state(pdf_path, state)
+                self.update_mask_list()
+                # Update option label displays for all image masks in the current scene
+                for mask_id, mask_item in self.page_scene.current_masks.items():
+                    if hasattr(mask_item, 'update_option_label') and hasattr(mask_item, 'mask_type') and mask_item.mask_type == "image":
+                        # Find the updated option label from state
+                        page_key = str(self.current_page_index + 1)
+                        page_data = state.get("pages", {}).get(page_key, {})
+                        for mask_data in page_data.get("masks", []):
+                            if mask_data.get("id") == mask_id:
+                                option_label = mask_data.get("option_label", "")
+                                mask_item.update_option_label(option_label)
+                                break
+                # Update metadata dock if an image mask is selected
+                if self.metadata_dock and hasattr(self.metadata_dock, '_current_mask_id') and self.metadata_dock._current_mask_id:
+                    self._update_metadata_dock_mask(self.metadata_dock._current_mask_id)
+                self.status_bar.showMessage("Option labels updated automatically.", 4000)
+            else:
+                self.status_bar.showMessage("No option labels were changed.", 3000)
+
+        except option_label_ocr.OCRUnavailableError as e:
+            QMessageBox.warning(
+                self,
+                "OCR Not Available",
+                f"PaddleOCR is not available:\n{str(e)}\n\n"
+                "Install with:\n  pip install paddlepaddle>=2.6.1\n  pip install paddleocr==3.0.0"
+            )
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "OCR Error",
+                f"An error occurred during OCR processing:\n{str(e)}"
+            )
+            self.status_bar.showMessage("OCR processing failed.", 3000)

@@ -1,7 +1,7 @@
 from typing import List, Tuple, Dict, Any, Optional
-from PyQt6.QtWidgets import QGraphicsRectItem, QGraphicsItem, QGraphicsEllipseItem, QGraphicsView
+from PyQt6.QtWidgets import QGraphicsRectItem, QGraphicsItem, QGraphicsEllipseItem, QGraphicsView, QGraphicsTextItem
 from PyQt6.QtCore import Qt, pyqtSignal, QPointF, QRectF
-from PyQt6.QtGui import QPen, QBrush, QColor, QCursor
+from PyQt6.QtGui import QPen, QBrush, QColor, QCursor, QFont
 
 
 class EdgeHandle(QGraphicsEllipseItem):
@@ -27,6 +27,72 @@ class EdgeHandle(QGraphicsEllipseItem):
         elif self.edge in ['left', 'right']:
             return QCursor(Qt.CursorShape.SizeHorCursor)
         return QCursor(Qt.CursorShape.ArrowCursor)
+    
+
+class OptionLabelDisplay(QGraphicsTextItem):
+    """A small text display for showing option labels in the top-left corner of image masks."""
+    
+    def __init__(self, parent_mask: 'EditableMaskItem'):
+        super().__init__()
+        self.parent_mask = parent_mask
+        self.setParentItem(parent_mask)
+        
+        # Set up the visual appearance
+        font = QFont()
+        font.setPointSize(30)  # Tripled from 10 to 30
+        font.setBold(True)
+        self.setFont(font)
+        
+        # Position at top-left corner with larger padding for bigger text
+        self.setPos(8, 8)
+        
+        # Set z-value to appear above the mask
+        self.setZValue(20)
+        
+        # Make it non-interactive
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
+        
+        # Initially hidden
+        self.setVisible(False)
+        
+    def update_label(self, option_label: str):
+        """Update the displayed option label text."""
+        if option_label and option_label.strip():
+            self.setPlainText(option_label.strip())
+            # Reposition label to the top-left of the parent mask's bounding box
+            try:
+                parent_rect = self.parent_mask.boundingRect()
+                # Add a small padding so the text isn't flush to the edge
+                pad_x, pad_y = 8, 8
+                self.setPos(parent_rect.left() + pad_x, parent_rect.top() + pad_y)
+            except Exception:
+                # Fallback to the original small offset
+                self.setPos(8, 8)
+
+            # Set white text for visibility and show the label
+            self.setDefaultTextColor(QColor(255, 255, 255))
+            self.setVisible(True)
+        else:
+            # Hide if no label
+            self.setVisible(False)
+    
+    def paint(self, painter, option, widget):
+        """Override paint to draw background box."""
+        if self.isVisible() and self.toPlainText():
+            # Draw background box
+            rect = self.boundingRect()
+            background_rect = rect.adjusted(-6, -4, 6, 4)  # Doubled padding for larger text
+            
+            # Semi-transparent dark background
+            painter.fillRect(background_rect, QColor(0, 0, 0, 180))
+            
+            # Draw border with thicker line for visibility
+            painter.setPen(QPen(QColor(255, 255, 255), 2))  # Increased from 1 to 2
+            painter.drawRect(background_rect)
+        
+        # Draw the text
+        super().paint(painter, option, widget)
     
 
     def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value: Any) -> Any:
@@ -86,6 +152,11 @@ class EditableMaskItem(QGraphicsRectItem):
         self.mask_type = mask_type
         self.handles: Dict[str, EdgeHandle] = {}
         self.is_updating_handles = False
+        
+        # Create option label display for image masks
+        self.option_label_display: Optional[OptionLabelDisplay] = None
+        if self.mask_type == "image":
+            self.option_label_display = OptionLabelDisplay(self)
         
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
@@ -232,3 +303,8 @@ class EditableMaskItem(QGraphicsRectItem):
         y1 = rect.bottom() + pos.y()
         
         return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+    
+    def update_option_label(self, option_label: str):
+        """Update the option label display for image masks."""
+        if self.option_label_display and self.mask_type == "image":
+            self.option_label_display.update_label(option_label)
