@@ -12,7 +12,6 @@ except ImportError:
 
 try:
     from PyQt6.QtWidgets import QApplication, QFileDialog, QMessageBox
-    from PyQt6.QtCore import Qt
 except ImportError:
     print("Error: PyQt6 is required. Install with: pip install PyQt6")
     sys.exit(1)

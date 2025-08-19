@@ -1,8 +1,6 @@
-from typing import List, Dict, Any, Callable, Optional, Tuple
+from typing import List, Dict, Any, Callable, Optional, NewType
 import re
-import os
 import io
-from concurrent.futures import ThreadPoolExecutor
 from PIL import Image
 import numpy as np
 from enum import Enum
@@ -13,22 +11,18 @@ except ImportError:
     fitz = None
 
 try:
-    from paddleocr import PaddleOCR
-except ImportError:
-    PaddleOCR = None
-
-try:
     from ocr_engines import tesseract_engine
 except ImportError:
     tesseract_engine = None
 
-# OCR Backend enum
+# Type alias for mask IDs
+MaskID = NewType("MaskID", str)
+
+# OCR Backend enum - only Tesseract supported
 class OCRBackend(str, Enum):
-    PADDLE = "paddle"
     TESSERACT = "tesseract"
 
-# Global OCR instance - lazy initialization
-_ocr_instance: Optional[Any] = None
+# Global active backend
 _active_backend: OCRBackend = OCRBackend.TESSERACT
 
 # ----------------------------------------------------------------------
@@ -40,9 +34,16 @@ def set_backend(backend: OCRBackend) -> None:
     Parameters
     ----------
     backend : OCRBackend
-        The OCR backend to use
+        The OCR backend to use (must be TESSERACT)
+        
+    Raises
+    ------
+    ValueError
+        If backend is not TESSERACT
     """
     global _active_backend
+    if backend != OCRBackend.TESSERACT:
+        raise ValueError(f"Only {OCRBackend.TESSERACT} backend is supported")
     _active_backend = backend
 
 def get_backend() -> OCRBackend:
@@ -51,12 +52,23 @@ def get_backend() -> OCRBackend:
     Returns
     -------
     OCRBackend
-        The currently active OCR backend
+        The currently active OCR backend (always TESSERACT)
     """
     return _active_backend
 
+def _ensure_tesseract_available() -> None:
+    """Ensure Tesseract is available and raise if not.
+    
+    Raises
+    ------
+    OCRUnavailableError
+        If Tesseract is not available
+    """
+    if tesseract_engine is None:
+        raise OCRUnavailableError("pytesseract is not available. Install with: pip install pytesseract>=0.3.10")
+
 def _run_ocr_engine(img: np.ndarray) -> List[str]:
-    """Run OCR on image using the active backend.
+    """Run OCR on image using Tesseract.
     
     Parameters
     ----------
@@ -71,45 +83,29 @@ def _run_ocr_engine(img: np.ndarray) -> List[str]:
     Raises
     ------
     OCRUnavailableError
-        If the selected OCR backend is not available
+        If Tesseract is not available
     """
-    if _active_backend == OCRBackend.PADDLE:
-        # Use PaddleOCR
-        ocr = _get_ocr_instance()
-        try:
-            result = ocr.predict(img)
-            return _collect_texts(result)
-        except Exception as e:
-            print(f"PaddleOCR prediction failed: {e}")
-            return []
+    _ensure_tesseract_available()
     
-    elif _active_backend == OCRBackend.TESSERACT:
-        # Use Tesseract
-        if tesseract_engine is None:
-            raise OCRUnavailableError("pytesseract is not available. Install with: pip install pytesseract>=0.3.10")
-        
-        try:
-            # Convert numpy array to PIL Image
-            pil_img = Image.fromarray(img)
-            return tesseract_engine.recognise(pil_img)
-        except Exception as e:
-            print(f"Tesseract OCR failed: {e}")
-            return []
-    
-    else:
-        raise OCRUnavailableError(f"Unknown OCR backend: {_active_backend}")
+    try:
+        # Convert numpy array to PIL Image
+        pil_img = Image.fromarray(img)
+        return tesseract_engine.recognise(pil_img)
+    except Exception as e:
+        print(f"Tesseract OCR failed: {e}")
+        return []
 
 # ----------------------------------------------------------------------
 # OCR availability helpers
 # ----------------------------------------------------------------------
 class OCRUnavailableError(RuntimeError):
-    """Raised when PaddleOCR or its dependencies are not available."""
+    """Raised when Tesseract or its dependencies are not available."""
     pass
 
-_ocr_available_cache: Optional[Tuple[bool, str]] = None
+_ocr_available_cache: Optional[tuple[bool, str]] = None
 
-def is_available(force_refresh: bool = False) -> Tuple[bool, str]:
-    """Check whether PaddleOCR and its runtime dependencies are usable.
+def is_available(force_refresh: bool = False) -> tuple[bool, str]:
+    """Check whether Tesseract and its runtime dependencies are usable.
 
     Parameters
     ----------
@@ -118,68 +114,32 @@ def is_available(force_refresh: bool = False) -> Tuple[bool, str]:
 
     Returns
     -------
-    Tuple[bool, str]
+    tuple[bool, str]
         (True, "") if OCR can be used, otherwise (False, error_message)
     """
     global _ocr_available_cache
     if _ocr_available_cache is not None and not force_refresh:
         return _ocr_available_cache
     
-    # Probe the currently selected backend rather than always checking PaddleOCR
     try:
-        if _active_backend == OCRBackend.PADDLE:
-            from paddleocr import PaddleOCR as _PaddleOCR
-            # Test actual instantiation to catch runtime issues
-            test_ocr = _PaddleOCR()
-            del test_ocr  # Release immediately
-            _ocr_available_cache = (True, "")
-
-        elif _active_backend == OCRBackend.TESSERACT:
-            # Ensure pytesseract and the tesseract binary are available
-            try:
-                import pytesseract as _pyt
-            except ModuleNotFoundError as e:
-                _ocr_available_cache = (False, f"Module not found: {e.name}")
-            else:
-                try:
-                    # This will raise if the tesseract binary isn't available or is misconfigured
-                    _ = _pyt.get_tesseract_version()
-                    _ocr_available_cache = (True, "")
-                except Exception as e:
-                    _ocr_available_cache = (False, f"Tesseract binary not available or failed: {str(e)}")
+        # Ensure pytesseract and the tesseract binary are available
+        try:
+            import pytesseract as _pyt
+        except ModuleNotFoundError as e:
+            _ocr_available_cache = (False, f"Module not found: {e.name}")
         else:
-            _ocr_available_cache = (False, f"Unknown OCR backend: {_active_backend}")
+            try:
+                # This will raise if the tesseract binary isn't available or is misconfigured
+                _ = _pyt.get_tesseract_version()
+                _ocr_available_cache = (True, "")
+            except Exception as e:
+                _ocr_available_cache = (False, f"Tesseract binary not available or failed: {str(e)}")
 
     except Exception as e:
         # Catch-all for unexpected probe errors
         _ocr_available_cache = (False, f"OCR availability probe failed: {str(e)}")
     
     return _ocr_available_cache
-
-def _get_ocr_instance() -> Any:
-    """Get or create the global PaddleOCR instance."""
-    global _ocr_instance, _ocr_available_cache
-    # Only create a PaddleOCR instance when the paddle backend is active
-    if _active_backend != OCRBackend.PADDLE:
-        raise OCRUnavailableError("PaddleOCR is not the active backend")
-
-    if _ocr_instance is None:
-        ok, err = is_available()
-        if not ok:
-            raise OCRUnavailableError(err)
-        try:
-            _ocr_instance = PaddleOCR(
-                use_doc_orientation_classify=False,
-                use_doc_unwarping=False,
-                use_textline_orientation=False,
-                lang='en',
-                rec_batch_num=1
-            )
-        except Exception as e:
-            # Invalidate cache on instantiation failure
-            _ocr_available_cache = (False, f"PaddleOCR instantiation failed: {str(e)}")
-            raise OCRUnavailableError(f"PaddleOCR instantiation failed: {str(e)}")
-    return _ocr_instance
 
 def _sanitize_bbox(page, bbox: List[float], zoom: float) -> Optional[Any]:
     """Sanitize bounding box to ensure valid dimensions for rendering.
@@ -321,70 +281,7 @@ def _detect_letter(texts: List[str]) -> str:
     
     return ""
 
-def _collect_texts(ocr_result: Any) -> List[str]:
-    """Extract recognized text strings from PaddleOCR result.
-    
-    Handles both new predict() API (OCRResult objects) and legacy ocr() API.
-    Robust against unexpected result structures.
-    
-    Parameters
-    ----------
-    ocr_result : Any
-        Result from PaddleOCR predict() or ocr() method
-        
-    Returns
-    -------
-    List[str]
-        List of recognized text strings
-    """
-    texts: List[str] = []
-    
-    if not ocr_result:
-        return texts
-    
-    try:
-        # Handle single OCRResult object (not in a list)
-        if hasattr(ocr_result, 'res'):
-            rec_texts = ocr_result.res.get('rec_texts', [])
-            for text in rec_texts:
-                texts.append(str(text))
-            return texts
-        
-        # Handle list of OCRResult objects
-        if isinstance(ocr_result, list) and ocr_result and hasattr(ocr_result[0], 'res'):
-            for page_res in ocr_result:
-                rec_texts = page_res.res.get('rec_texts', [])
-                for text in rec_texts:
-                    texts.append(str(text))
-            return texts
-        
-        # Legacy API: ocr() returns list of pages with [bbox, (text, confidence)] format
-        if isinstance(ocr_result, list) and ocr_result and ocr_result[0]:
-            page_res = ocr_result[0]
-            if isinstance(page_res, list):
-                for item in page_res:
-                    if isinstance(item, (list, tuple)) and len(item) >= 2:
-                        text_info = item[1]
-                        if isinstance(text_info, (list, tuple)) and len(text_info) >= 1:
-                            texts.append(str(text_info[0]))
-                        elif isinstance(text_info, str):
-                            texts.append(text_info)
-    
-    except Exception as e:
-        # Log unexpected structure for debugging
-        print(f"Warning: Unexpected OCR result structure: {type(ocr_result)}, error: {e}")
-        # Try to extract any string-like content as fallback
-        try:
-            if isinstance(ocr_result, str):
-                texts.append(ocr_result)
-            elif hasattr(ocr_result, '__str__'):
-                texts.append(str(ocr_result))
-        except:
-            pass
-    
-    return texts
-
-def _process_single_mask(page, mask_data: Dict[str, Any], overwrite: bool, dpi: int = 300) -> Tuple[str, str, bool]:
+def _process_single_mask(page, mask_data: Dict[str, Any], overwrite: bool, dpi: int = 300) -> tuple[MaskID, str, bool]:
     """Process a single mask for option label detection.
     
     Parameters
@@ -400,10 +297,10 @@ def _process_single_mask(page, mask_data: Dict[str, Any], overwrite: bool, dpi: 
         
     Returns
     -------
-    Tuple[str, str, bool]
+    tuple[MaskID, str, bool]
         (mask_id, detected_label, was_processed)
     """
-    mask_id = mask_data["id"]
+    mask_id = MaskID(mask_data["id"])
     
     # Skip if already checked and not overwriting
     if mask_data.get("option_label_checked", False) and not overwrite:
@@ -433,7 +330,7 @@ def _process_single_mask(page, mask_data: Dict[str, Any], overwrite: bool, dpi: 
         # Convert PIL image to numpy array for OCR
         img_array = np.array(pil_image)
         
-        # Run OCR using the active backend
+        # Run OCR using Tesseract
         try:
             texts = _run_ocr_engine(img_array)
         except Exception as ocr_error:

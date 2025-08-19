@@ -2,8 +2,7 @@ import json
 import os
 import tempfile
 import uuid
-from pathlib import Path
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional
 
 try:
     import fitz  # PyMuPDF

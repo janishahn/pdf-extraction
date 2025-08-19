@@ -1,6 +1,6 @@
-from typing import List, Tuple, Dict, Any, Optional
-from PyQt6.QtWidgets import QGraphicsRectItem, QGraphicsItem, QGraphicsEllipseItem, QGraphicsView, QGraphicsTextItem
-from PyQt6.QtCore import Qt, pyqtSignal, QPointF, QRectF
+from typing import List, Dict, Any, Optional
+from PyQt6.QtWidgets import QGraphicsRectItem, QGraphicsItem, QGraphicsEllipseItem, QGraphicsTextItem
+from PyQt6.QtCore import Qt, QPointF
 from PyQt6.QtGui import QPen, QBrush, QColor, QCursor, QFont
 
 

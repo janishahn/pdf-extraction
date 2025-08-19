@@ -5,7 +5,7 @@ from export import check_all_pages_approved
 import vector_bbox
 import question_bbox
 from editable_mask import EditableMaskItem
-from shapely.geometry import Polygon, box, LineString
+from shapely.geometry import Polygon, box
 import option_label_ocr
 
 # Rendering DPI used throughout the application for PDF rasterization
@@ -22,13 +22,13 @@ try:
         QMainWindow, QVBoxLayout, QHBoxLayout, QWidget,
         QLabel, QListWidget, QListWidgetItem, QPushButton,
         QSplitter, QGraphicsView, QGraphicsScene, QStatusBar,
-        QMessageBox, QMenuBar, QDialog, QTextEdit, QDockWidget,
+        QMessageBox, QDialog, QTextEdit, QDockWidget,
         QToolBar, QGraphicsPolygonItem, QGraphicsItem, QGraphicsRectItem,
-        QApplication, QFileDialog, QAbstractItemView, QFormLayout, QComboBox, QSpinBox, QCheckBox, QLineEdit,
+        QApplication, QFileDialog, QAbstractItemView, QFormLayout, QComboBox, QSpinBox, QCheckBox,
         QProgressDialog, QGraphicsTextItem
     )
-    from PyQt6.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer, QThread, QObject
-    from PyQt6.QtGui import QPixmap, QImage, QShortcut, QKeySequence, QAction, QPolygonF, QPen, QBrush, QColor, QIcon, QActionGroup
+    from PyQt6.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer
+    from PyQt6.QtGui import QPixmap, QImage, QShortcut, QKeySequence, QAction, QPolygonF, QPen, QBrush, QColor, QIcon
 except ImportError:
     print("Error: PyQt6 is required. Install with: pip install PyQt6")
     raise
@@ -1095,23 +1095,9 @@ class MainWindow(QMainWindow):
 
         toolbar.addSeparator()
 
-        # OCR Engine selection
-        ocr_engine_label = QLabel("OCR Engine:")
+        # OCR Engine selection - Tesseract only
+        ocr_engine_label = QLabel("OCR Engine: Tesseract")
         toolbar.addWidget(ocr_engine_label)
-        
-        self.ocr_engine_group = QActionGroup(self)
-        self.ocr_engine_group.setExclusive(True)
-        
-        self.paddle_ocr_action = QAction("PaddleOCR", self, checkable=True)
-        self.paddle_ocr_action.setChecked(False)
-        self.paddle_ocr_action.triggered.connect(lambda: self._set_ocr_backend_from_action("paddle"))
-        self.ocr_engine_group.addAction(self.paddle_ocr_action)
-        toolbar.addAction(self.paddle_ocr_action)
-        self.tesseract_ocr_action = QAction("Tesseract", self, checkable=True)
-        self.tesseract_ocr_action.setChecked(True)  # Default to Tesseract
-        self.tesseract_ocr_action.triggered.connect(lambda: self._set_ocr_backend_from_action("tesseract"))
-        self.ocr_engine_group.addAction(self.tesseract_ocr_action)
-        toolbar.addAction(self.tesseract_ocr_action)
 
     def create_status_bar(self):
         """Create the status bar."""
@@ -2617,10 +2603,7 @@ class MainWindow(QMainWindow):
     def _set_ocr_backend_from_action(self, backend_name: str):
         """Set OCR backend from toolbar action and update status bar."""
         try:
-            if backend_name == "paddle":
-                option_label_ocr.set_backend(option_label_ocr.OCRBackend.PADDLE)
-                self.status_bar.showMessage("OCR engine switched to PaddleOCR.", 3000)
-            elif backend_name == "tesseract":
+            if backend_name == "tesseract":
                 option_label_ocr.set_backend(option_label_ocr.OCRBackend.TESSERACT)
                 self.status_bar.showMessage("OCR engine switched to Tesseract.", 3000)
             else:
@@ -2645,8 +2628,8 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "OCR Unavailable",
-                f"PaddleOCR unavailable:\n{err}\n\n"
-                "Install with:\n  pip install paddlepaddle>=2.6.1\n  pip install paddleocr==3.0.0"
+                f"Tesseract OCR unavailable:\n{err}\n\n"
+                "Install with:\n  pip install pytesseract>=0.3.10"
             )
             # Cache failure to suppress further attempts this session
             self._ocr_failed = True
@@ -2705,8 +2688,8 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "OCR Not Available",
-                f"PaddleOCR is not available:\n{str(e)}\n\n"
-                "Install with:\n  pip install paddlepaddle>=2.6.1\n  pip install paddleocr==3.0.0"
+                f"Tesseract OCR is not available:\n{str(e)}\n\n"
+                "Install with:\n  pip install pytesseract>=0.3.10"
             )
         except Exception as e:
             QMessageBox.critical(
