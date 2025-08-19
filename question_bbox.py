@@ -6,18 +6,32 @@ import fitz
 def _find_enumeration_indices(lines: List[Tuple[float, float, float, float]],
                              max_enum_width: float,
                              left_margin_max: float,
-                             min_height: float) -> List[int]:
-    """Return indices in *lines* that look like question enumeration markers.
+                             min_height: float,
+                             top_min_y: float) -> List[int]:
+    """Return indices in lines that look like question enumeration markers.
 
-    The *lines* list is sorted in ascending *y* order.  A line is considered an
-    enumeration marker when it satisfies all of the following:
+    Parameters
+    ----------
+    lines : List[Tuple[float, float, float, float]]
+        Line bounding boxes in PDF point coordinates, sorted by ascending y.
+    max_enum_width : float
+        Maximum width of the first span/line to be treated as an enumeration marker.
+    left_margin_max : float
+        Maximum left x-coordinate to still count as being within the left margin.
+    min_height : float
+        Minimum line height to filter out tiny artefacts.
+    top_min_y : float
+        Minimum y (from top) a marker must have to not be considered part of the header.
 
-    1. Its bounding box width is at most *max_enum_width*.
-    2. Its left x-coordinate is not larger than *left_margin_max*.
-    3. Its height is at least *min_height* (to filter out tiny artefacts).
+    Returns
+    -------
+    List[int]
+        Indices of lines that match the enumeration marker heuristic.
     """
     indices: List[int] = []
     for idx, (x0, y0, x1, y1) in enumerate(lines):
+        if y0 < top_min_y:
+            continue
         if (x1 - x0) <= max_enum_width and x0 <= left_margin_max and (y1 - y0) >= min_height:
             indices.append(idx)
     return indices
@@ -32,6 +46,7 @@ def get_page_question_boxes(
     left_margin_max: float = 90.0,
     line_gap_threshold: float = 6.0,
     min_height: float = 8.0,
+    top_margin_ratio: float = 0.05,
 ) -> List[Tuple[float, float, float, float]]:
     """Return bounding boxes for individual questions on a page.
 
@@ -45,6 +60,31 @@ def get_page_question_boxes(
     If no enumeration markers can be detected, the function automatically
     falls back to a simple paragraph-based grouping similar to the previous
     implementation.
+
+    Parameters
+    ----------
+    pdf_path : str
+        Path to the PDF file.
+    page_index : int
+        Zero-based page index.
+    dpi : int, optional
+        Target DPI for output coordinates, by default 300.
+    max_enum_width : float, optional
+        Maximum width (in PDF points) of a first-span to be considered an enumeration marker.
+    left_margin_max : float, optional
+        Maximum left x (in PDF points) for a marker to be considered near the left margin.
+    line_gap_threshold : float, optional
+        Threshold (in PDF points) to group adjacent lines when no markers are found.
+    min_height : float, optional
+        Minimum height (in PDF points) to consider a line as valid text (filters artefacts).
+    top_margin_ratio : float, optional
+        Fraction of page height considered as top header area to ignore when detecting
+        enumeration markers (helps avoid treating header page numbers as questions). Default 0.03.
+
+    Returns
+    -------
+    List[Tuple[float, float, float, float]]
+        A list of bounding boxes (x0, y0, x1, y1) in DPI coordinates for detected questions.
     """
     doc = fitz.open(pdf_path)
     try:
@@ -54,6 +94,8 @@ def get_page_question_boxes(
         page = doc[page_index]
         text_dict = page.get_text("dict")
         scale = dpi / 72.0  # convert from PDF points → requested dpi
+        page_rect = page.rect
+        top_min_y = page_rect.y0 + top_margin_ratio * page_rect.height
 
         # Collect all text line bounding boxes
         lines: List[Tuple[float, float, float, float, float, str]] = []
@@ -93,6 +135,9 @@ def get_page_question_boxes(
             if span_bbox is None:
                 continue
             sx0, sy0, sx1, sy1 = span_bbox
+            # Exclude header markers within the top margin
+            if sy0 < top_min_y:
+                continue
             if (sx1 - sx0) <= max_enum_width and sx0 <= left_margin_max and (sy1 - sy0) >= min_height:
                 first_text = line[5] if len(line) > 5 else ""
                 if first_text.startswith("("):
@@ -102,7 +147,13 @@ def get_page_question_boxes(
 
         if not enum_indices:
             # fallback try whole-line metrics
-            enum_indices = _find_enumeration_indices([l[:4] for l in lines], max_enum_width, left_margin_max, min_height)
+            enum_indices = _find_enumeration_indices(
+                [l[:4] for l in lines],
+                max_enum_width,
+                left_margin_max,
+                min_height,
+                top_min_y,
+            )
 
         if not enum_indices:
             # --- fallback: simple vertical gap grouping (legacy behaviour) ---

@@ -258,6 +258,10 @@ output/
 - `vector_bbox.py`: Provides functionality for automatic detection and extraction of bounding boxes from vector graphics in PDFs.
 - `question_bbox.py`: Automatic detection of question regions in PDFs.
 
+#### Question detection improvements
+
+The question region detection ignores small enumeration markers detected in the top header area to prevent misclassifying header page numbers (often on even pages) as questions. You can tune the header size via the optional `top_margin_ratio` parameter in `question_bbox.get_page_question_boxes` (default: `0.03`, i.e., top 3% of page height is ignored when looking for enumeration markers).
+
 ### Performance Considerations
 
 - **Rendering**: Pages are rendered at 300 DPI for both viewing and export to maintain consistency and quality.
