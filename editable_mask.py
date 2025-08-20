@@ -6,20 +6,76 @@ from PyQt6.QtGui import QPen, QBrush, QColor, QCursor, QFont
 
 class EdgeHandle(QGraphicsEllipseItem):
     """A small handle for resizing mask edges."""
-    
+
     def __init__(self, edge: str, parent_mask: 'EditableMaskItem'):
         super().__init__(-4, -4, 8, 8)
         self.edge = edge
         self.parent_mask = parent_mask
+        self.is_being_dragged = False
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsFocusable, True)
         self.setCursor(self._get_cursor())
-        
+
         self.setBrush(QBrush(QColor(255, 255, 255, 200)))
         self.setPen(QPen(QColor(0, 0, 0), 1))
-        
+
         self.setZValue(10)
-        
+
+    def mousePressEvent(self, event):
+        """Handle mouse press to start dragging."""
+        self.is_being_dragged = True
+        event.accept()  # Accept the event to maintain mouse capture
+        self.grabMouse()  # Explicitly grab mouse to prevent capture loss
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        """Handle mouse movement during dragging."""
+        if self.is_being_dragged:
+            event.accept()  # Keep accepting events to maintain capture
+            # Calculate the movement delta and apply it
+            new_pos = self.pos() + event.pos() - event.lastPos()
+            self.setPos(new_pos)
+        else:
+            super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        """Handle mouse release to end dragging."""
+        self.is_being_dragged = False
+        self.ungrabMouse()  # Release mouse capture
+        event.accept()  # Accept the release event
+        super().mouseReleaseEvent(event)
+
+    def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value: Any) -> Any:
+        """Handle item changes, particularly position changes during dragging."""
+        if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange and self.is_being_dragged:
+            # This is called when Qt wants to change our position during dragging
+            # We can modify the value to constrain the movement
+            new_pos = value
+            rect = self.parent_mask.rect()
+            min_size = 10
+
+            if self.edge == 'top':
+                new_pos.setY(min(new_pos.y(), rect.bottom() - min_size))
+                new_pos.setX(rect.center().x())
+            elif self.edge == 'bottom':
+                new_pos.setY(max(new_pos.y(), rect.top() + min_size))
+                new_pos.setX(rect.center().x())
+            elif self.edge == 'left':
+                new_pos.setX(min(new_pos.x(), rect.right() - min_size))
+                new_pos.setY(rect.center().y())
+            elif self.edge == 'right':
+                new_pos.setX(max(new_pos.x(), rect.left() + min_size))
+                new_pos.setY(rect.center().y())
+
+            return new_pos
+        elif change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged and self.is_being_dragged:
+            # This is called after our position has actually changed
+            # Notify parent to update the mask geometry
+            self.parent_mask.handle_moved(self.edge, self.pos())
+
+        return super().itemChange(change, value)
+
     def _get_cursor(self) -> QCursor:
         """Get appropriate cursor for the edge."""
         if self.edge in ['top', 'bottom']:
@@ -93,31 +149,6 @@ class OptionLabelDisplay(QGraphicsTextItem):
         
         # Draw the text
         super().paint(painter, option, widget)
-    
-
-    def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value: Any) -> Any:
-        if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange:
-            new_pos = value
-            rect = self.parent_mask.rect()
-            min_size = 10
-            
-            if self.edge == 'top':
-                new_pos.setY(min(new_pos.y(), rect.bottom() - min_size))
-                new_pos.setX(rect.center().x())
-            elif self.edge == 'bottom':
-                new_pos.setY(max(new_pos.y(), rect.top() + min_size))
-                new_pos.setX(rect.center().x())
-            elif self.edge == 'left':
-                new_pos.setX(min(new_pos.x(), rect.right() - min_size))
-                new_pos.setY(rect.center().y())
-            elif self.edge == 'right':
-                new_pos.setX(max(new_pos.x(), rect.left() + min_size))
-                new_pos.setY(rect.center().y())
-            
-            return new_pos
-        elif change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged:
-            self.parent_mask.handle_moved(self.edge, self.pos())
-        return super().itemChange(change, value)
 
 
 class EditableMaskItem(QGraphicsRectItem):
@@ -236,12 +267,12 @@ class EditableMaskItem(QGraphicsRectItem):
         """Handle movement of an edge handle."""
         if self.is_updating_handles:
             return
-            
+
         self.is_updating_handles = True
-        
+
         rect = self.rect()
         min_size = 10
-        
+
         if edge == 'top':
             new_top = new_pos.y()
             if rect.bottom() - new_top >= min_size:
@@ -258,16 +289,21 @@ class EditableMaskItem(QGraphicsRectItem):
             new_right = new_pos.x()
             if new_right - rect.left() >= min_size:
                 rect.setRight(new_right)
-        
+
         self.setRect(rect)
         # Force-update positions of all handles so they stay aligned while
         # the user continues dragging.
         self._update_handle_positions(force=True)
-        
+
         self.is_updating_handles = False
-        
+
+        # Only notify scene of changes if we're not in the middle of a drag operation
+        # This prevents interference with active mouse capture
         if self.scene() and hasattr(self.scene(), 'on_mask_geometry_changed'):
-            self.scene().on_mask_geometry_changed(self.mask_id)
+            # Check if any handle is currently being dragged
+            any_handle_dragging = any(handle.is_being_dragged for handle in self.handles.values())
+            if not any_handle_dragging:
+                self.scene().on_mask_geometry_changed(self.mask_id)
     
     def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value: Any) -> Any:
         if change == QGraphicsItem.GraphicsItemChange.ItemSelectedHasChanged:
