@@ -1,7 +1,7 @@
 from typing import List, Dict, Any, Optional
 from PyQt6.QtWidgets import QGraphicsRectItem, QGraphicsItem, QGraphicsEllipseItem, QGraphicsTextItem
-from PyQt6.QtCore import Qt, QPointF
-from PyQt6.QtGui import QPen, QBrush, QColor, QCursor, QFont
+from PyQt6.QtCore import Qt, QPointF, QRectF
+from PyQt6.QtGui import QPen, QBrush, QColor, QCursor, QFont, QPainterPath
 
 
 class EdgeHandle(QGraphicsEllipseItem):
@@ -83,6 +83,21 @@ class EdgeHandle(QGraphicsEllipseItem):
         elif self.edge in ['left', 'right']:
             return QCursor(Qt.CursorShape.SizeHorCursor)
         return QCursor(Qt.CursorShape.ArrowCursor)
+
+    def shape(self) -> QPainterPath:
+        """Return a larger shape for mouse interaction while keeping visual size small."""
+        # Create a larger rectangular area around the handle for easier clicking
+        # The visual handle is only 8x8 pixels, but we'll make the clickable area much larger
+        hit_margin = 12  # pixels of extra margin around the visual handle
+
+        # Create a rectangle that's much larger than the visual 8x8 circle
+        # The handle is centered at (0,0) with size (-4,-4,8,8), so we expand around that
+        larger_rect = QRectF(-4 - hit_margin, -4 - hit_margin,
+                            8 + 2 * hit_margin, 8 + 2 * hit_margin)
+
+        path = QPainterPath()
+        path.addRect(larger_rect)
+        return path
     
 
 class OptionLabelDisplay(QGraphicsTextItem):
