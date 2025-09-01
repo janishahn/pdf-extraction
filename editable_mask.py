@@ -41,9 +41,15 @@ class EdgeHandle(QGraphicsEllipseItem):
 
     def mouseReleaseEvent(self, event):
         """Handle mouse release to end dragging."""
+        was_dragging = self.is_being_dragged
         self.is_being_dragged = False
         self.ungrabMouse()  # Release mouse capture
         event.accept()  # Accept the release event
+
+        # Trigger save when drag operation is complete
+        if was_dragging and self.scene() and hasattr(self.scene(), 'on_mask_geometry_changed'):
+            self.scene().on_mask_geometry_changed(self.parent_mask.mask_id)
+
         super().mouseReleaseEvent(event)
 
     def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value: Any) -> Any:
@@ -312,30 +318,33 @@ class EditableMaskItem(QGraphicsRectItem):
 
         self.is_updating_handles = False
 
-        # Only notify scene of changes if we're not in the middle of a drag operation
-        # This prevents interference with active mouse capture
-        if self.scene() and hasattr(self.scene(), 'on_mask_geometry_changed'):
-            # Check if any handle is currently being dragged
-            any_handle_dragging = any(handle.is_being_dragged for handle in self.handles.values())
-            if not any_handle_dragging:
-                self.scene().on_mask_geometry_changed(self.mask_id)
+        # Note: Save is now triggered in EdgeHandle.mouseReleaseEvent() instead of here
+        # to ensure it only happens when the drag operation is complete
     
     def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value: Any) -> Any:
         if change == QGraphicsItem.GraphicsItemChange.ItemSelectedHasChanged:
             if self.isSelected():
-                # Primary selection
+                # Primary selection - bring to top z-layer for handle accessibility
+                self.setZValue(100)  # High z-value to ensure mask is on top
                 self.setBrush(self.selected_brush)
                 self.setPen(self.selected_pen)
                 self._set_handles_visible(True)
+                # Ensure handles are above all other items including other masks
+                for handle in self.handles.values():
+                    handle.setZValue(110)  # Even higher than mask itself
                 self.is_showing_as_associated = False
                 if self.scene() and hasattr(self.scene(), 'on_mask_selection_changed'):
                     self.scene().on_mask_selection_changed(self)
             else:
-                # Clear selection highlighting
+                # Clear selection highlighting - restore normal z-order
+                self.setZValue(0)  # Normal z-value for unselected masks
                 if not self.is_showing_as_associated:
                     self.setBrush(self.default_brush)
                     self.setPen(self.default_pen)
                 self._set_handles_visible(False)
+                # Restore normal handle z-values
+                for handle in self.handles.values():
+                    handle.setZValue(10)
         elif change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged:
             self._update_handle_positions()
             if self.scene() and hasattr(self.scene(), 'on_mask_geometry_changed'):
