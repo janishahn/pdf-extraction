@@ -6,15 +6,15 @@ A powerful interactive tool for extracting images from PDF files using polygon m
 
 ### Installation
 
-1. **Install Dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
+1.  **Install Dependencies**
+    ```bash
+    uv pip install -r requirements.txt
+    ```
 
-2. **Run the Application**
-   ```bash
-   python app.py /path/to/pdf/directory
-   ```
+2.  **Run the Application**
+    ```bash
+    uv run python app.py /path/to/pdf/directory
+    ```
 
 ### Example Usage
 
@@ -28,118 +28,62 @@ python app.py ~/Documents/my_pdfs
 
 ## Features
 
-- **Interactive PDF Viewing**: Navigate through multiple PDFs and pages with smooth rendering
-- **Rectangle Mask Creation**: Draw rectangular masks over PDF content using drag-and-drop, or automatically generate masks from vector graphics
-- **Automatic Option Label Detection**: Uses Tesseract OCR to automatically detect option labels (A-E) in image masks for multiple choice questions
-- **Mask Editing**: Move, resize using edge handles, and delete masks with visual feedback
-- **Page Approval Workflow**: Systematic approval process for quality control
-- **Batch Export**: Export all approved masks to PNG files with metadata
-- **State Persistence**: All work is automatically saved and restored between sessions
+*   **Interactive PDF Viewing**: Navigate through multiple PDFs and pages with smooth rendering.
+*   **Flexible Mask Creation**: Draw rectangular masks over PDF content, or automatically generate masks from vector graphics. Supports both image and question mask types.
+*   **Automatic Option Label Detection**: Uses Tesseract OCR to automatically detect option labels (A-E) in image masks for multiple choice questions.
+*   **Advanced Mask Editing**: Move, resize, delete, merge, split, expand, and add masks with visual feedback.
+*   **Multi-page Question Support**: Define questions that span across multiple pages.
+*   **Page Approval Workflow**: Systematic approval process for quality control.
+*   **Batch Export**: Export all approved masks to PNG files with associated metadata.
+*   **State Persistence**: All work is automatically saved and restored between sessions using companion JSON files.
 
-## User Interface Guide
+## User Interface Overview
 
-### Main Window Layout
+The application features a main window with:
+*   **PDF List Panel** (Left): Lists all loaded PDFs and their approval status.
+*   **Viewer Panel** (Center): Displays the current PDF page with navigation and zoom controls.
+*   **Masks Panel** (Right): Lists all masks for the current page, allowing selection and management.
+*   **Toolbar** (Top): Provides quick access to drawing tools, mask operations, and OCR functions.
+*   **Metadata Dock** (Left): Allows editing PDF-level metadata and image mask option labels.
+*   **Mask Properties Dock** (Right): Displays detailed properties of selected masks.
 
-The application window consists of four main areas:
+### Basic Navigation
 
-1. **PDF List Panel** (Left): Shows all loaded PDFs with approval status
-2. **Viewer Panel** (Center): Displays the current PDF page with navigation controls
-3. **Mask Panel** (Right): Lists all masks for the current page
-4. **Toolbar** (Top): Quick access to common actions
-
-### Navigation Controls
-
-#### PDF Navigation
-- **Mouse**: Click any PDF in the left panel to switch to it
-- **Keyboard**: 
-  - `Ctrl + ↑` - Previous PDF
-  - `Ctrl + ↓` - Next PDF
-
-#### Page Navigation
-- **Keyboard**:
-  - `←` or `Page Up` - Previous page
-  - `→` or `Page Down` - Next page
-
-#### Zoom Controls
-- **Combined Zoom Button**: Split button with zoom out (left) and zoom in (right) functionality
-- **Keyboard**:
-  - `Ctrl + +` - Zoom in
-  - `Ctrl + -` - Zoom out
-  - `Ctrl + 0` - Fit to view
+*   **PDFs**: Select PDFs from the left panel or use `Ctrl + ↑`/`Ctrl + ↓`.
+*   **Pages**: Navigate pages using `←`/`→` or `Page Up`/`Page Down`.
+*   **Zoom**: Use the combined zoom button, "Fit to View", "Fit to Width", or `Ctrl + +`/`-`/`0`.
 
 ### Working with Masks
 
-#### Creating Masks
-1. Click "Draw Image Region" or "Draw Question Region" in the toolbar.
-2. Click and drag on the PDF page to draw a rectangle.
-3. Release the mouse button to complete the rectangle.
-4. Press **Enter** or **Space** to accept the mask, or **Escape** to discard it.
-5. Masks can also be automatically generated using the "Recompute Masks" button.
+1.  **Creating**: Select a "Draw Image Region" or "Draw Question Region" tool, then click and drag on the PDF. Press `Enter`/`Space` to accept or `Escape` to discard. Masks can also be automatically generated.
+2.  **Editing**: Select masks to move or resize them using handles.
+3.  **Management**: Select masks in the viewer or list. Use `Delete`/`Backspace` to remove. Merge, split, expand, or add masks using toolbar actions or keyboard shortcuts.
 
-#### Editing Masks
-1. Ensure "Select/Move" mode is active (default).
-2. Click on any mask to select it.
-3. Drag the mask to move it.
-4. Drag the small circular handles on the edges of a selected mask to resize it.
-5. Use the mask panel or keyboard shortcuts to delete masks.
+## Automatic Option Label Detection
 
-#### Mask Management
-- **Selection**: Click masks in the viewer or mask list to select them. Multi-selection is supported using `Ctrl` + click.
-- **Deletion**: Select masks and press `Delete` or `Backspace`, or right-click masks in the list and choose "Delete Selected Mask(s)".
-- **Visual Feedback**: Masks highlight when hovered over and show associations between image and question masks.
+The tool includes OCR-based option label detection for multiple choice questions:
+*   **Automatic Processing**: OCR runs automatically on unchecked image masks when a PDF is opened.
+*   **Manual Trigger**: Use "Detect Option Labels" in the toolbar to manually re-run OCR.
+*   **Customization**: Manually edit detected labels in the Metadata Panel.
 
-### Page Approval Workflow
+## Export Process
 
-1. **Review**: Examine the page and create/edit masks as needed
-2. **Approve**: Click "Approve Page" or press `Ctrl + Enter`
-3. **Auto-Navigation**: The tool automatically moves to the next unapproved page
-4. **Status Tracking**: PDF list shows approval progress (e.g., "✓ document.pdf (3/5)")
-5. **Bulk Approval**: Click "Accept All Pages" to approve all pages in the current PDF.
-
-### Automatic Option Label Detection
-
-The application includes intelligent OCR-based option label detection for multiple choice exam papers:
-
-#### How It Works
-1. **Automatic Processing**: When you open/switch to a PDF, the system automatically processes all unchecked image masks
-2. **OCR Analysis**: Each image mask is rendered and processed using Tesseract OCR to extract text
-3. **Pattern Recognition**: The system searches for option labels in parentheses: `(A)`, `(B)`, `(C)`, `(D)`, `(E)`
-4. **Label Assignment**: Detected labels are automatically assigned to the corresponding masks
-5. **Progress Tracking**: A modal progress dialog shows processing status
-
-#### Manual Control
-- **Toolbar Button**: Click "Detect Option Labels" to manually trigger OCR processing
-- **Overwrite Confirmation**: Manual processing asks for confirmation before overwriting existing labels
-- **Metadata Panel**: View and manually edit option labels in the left sidebar when an image mask is selected
-
-#### Technical Details
-- **Input**: Cropped image regions from PDF masks at 300 DPI
-- **OCR Engine**: Tesseract OCR with English language support
-- **Output**: Text recognition results filtered for option patterns
-- **State Tracking**: `option_label_checked` field prevents reprocessing of already analyzed masks
-
-### Export Process
-
-1. **Prerequisite**: All pages in a PDF must be approved before export
-2. **Trigger**: Click "Export All" in the toolbar
-3. **Output**: Creates `output/<pdf-name>/` directory with:
-   - Individual PNG files for each mask
-   - `manifest.json` with complete metadata
+All pages in a PDF must be approved before export. Click "Export All" to generate an `output/<pdf-name>/` directory containing individual PNG files for each mask and a `manifest.json` with complete metadata.
 
 ## Keyboard Shortcuts
 
 | Action | Shortcut |
-|--------|----------|
-| **Navigation** |
+|---|---|
+| **Navigation** | |
 | Previous Page | `←` or `Page Up` |
 | Next Page | `→` or `Page Down` |
 | Previous PDF | `Ctrl + ↑` |
 | Next PDF | `Ctrl + ↓` |
-| **Zoom** |
+| **Zoom** | |
 | Zoom In | `Ctrl + +` |
 | Zoom Out | `Ctrl + -` |
 | Fit to View | `Ctrl + 0` |
-| **Mask Operations** |
+| **Mask Operations** | |
 | Accept Mask | `Enter` or `Space` |
 | Discard Mask | `Escape` |
 | Delete Selected Mask | `Delete` or `Backspace` |
@@ -148,210 +92,44 @@ The application includes intelligent OCR-based option label detection for multip
 | Expand Selected Mask | `E` |
 | Associate Images with Question | `X` or `Ctrl + L` |
 | Select All Masks | `Ctrl + A` |
-| **Workflow** |
+| Add Selected Masks | `A` |
+| **Workflow** | |
 | Approve Current Page | `Ctrl + Enter` |
 | Accept All Pages in PDF | `Ctrl + Shift + Enter` |
+| **Application** | |
 | Show Help | `F1` |
+| Toggle Multi-page Question Mode | `Q` |
 
 ## File Structure and Data Storage
 
-### State Files
-
-Each PDF gets a companion `.json` file that stores:
-- Page count and navigation state
-- Mask definitions with coordinates and types
-- Approval status for each page
-- PDF metadata (year, grade group)
-- Option labels and processing status
-
-**Example**: `document.pdf` → `document.pdf.json`
-
-### Export Structure
-
-```
-output/
-└── document_name/
-    ├── manifest.json
-    ├── page-1-mask-abc123.png
-    ├── page-1-mask-def456.png
-    └── page-2-mask-ghi789.png
-```
-
-## JSON Schema Reference
-
-### State File Schema (`*.pdf.json`)
-
-```json
-{
-  "page_count": 5,
-  "pdf_metadata": {
-    "year": 2024,
-    "grade_group": "5-6"
-  },
-  "pages": {
-    "1": {
-      "approved": true,
-      "masks": [
-        {
-          "id": "unique-mask-id",
-          "type": "image",
-          "points": [[x1, y1], [x2, y2], [x3, y3], [x4, y4]],
-          "option_label": "A",
-          "option_label_checked": true
-        },
-        {
-          "id": "question-mask-id",
-          "type": "question",
-          "points": [[x1, y1], [x2, y2], [x3, y3], [x4, y4]],
-          "associated_image_ids": ["unique-mask-id"],
-          "question_id": "multi-page-question-id"
-        }
-      ]
-    }
-  }
-}
-```
-
-### Export Manifest Schema (`manifest.json`)
-
-```json
-{
-  "pdf_path": "path/to/source.pdf",
-  "pdf_stem": "source",
-  "export_dpi": 300,
-  "total_pages": 5,
-  "total_masks": 12,
-  "exported_masks": [
-    {
-      "page": 1,
-      "mask_id": "unique-mask-id",
-      "type": "image",
-      "bbox": [x_min, y_min, x_max, y_max],
-      "points": [[x1, y1], [x2, y2], [x3, y3], [x4, y4]],
-      "scaled_points": [[sx1, sy1], [sx2, sy2], [sx3, sy3], [sx4, sy4]],
-      "scale_factor": 1.0,
-      "png_path": "output/source/page-1-mask-unique-mask-id.png"
-    }
-  ]
-}
-```
+*   **State Files**: Each PDF has a companion `.json` file (e.g., `document.pdf.json`) storing mask definitions, approval status, and metadata.
+*   **Export Structure**: Exported images and a `manifest.json` are saved in `output/<pdf-name>/`.
 
 ## Technical Details
 
-### Dependencies
-
-- **PyQt6**: Modern GUI framework
-- **PyMuPDF (fitz)**: PDF rendering and processing
-- **Pillow**: Image processing and export
-- **Shapely**: Geometric operations for mask manipulation
-- **pytesseract**: Tesseract OCR engine for automatic option label detection
-- **Python 3.8+**: Core runtime
-
-### Core Modules
-
-- `app.py`: Main application entry point, handles PDF loading and GUI initialization.
-- `gui.py`: Implements the main graphical user interface, including PDF viewer, navigation, and mask management.
-- `editable_mask.py`: Defines interactive `QGraphicsItem` subclasses for drawing and resizing masks within the GUI.
-- `storage.py`: Manages the persistence of application state, including mask data and page approval status, using JSON sidecar files.
-- `export.py`: Handles the export of approved masks to image files and generates manifest files.
-- `option_label_ocr.py`: Provides OCR functionality for automatic option label detection using Tesseract.
-- `vector_bbox.py`: Provides functionality for automatic detection and extraction of bounding boxes from vector graphics in PDFs.
-- `question_bbox.py`: Automatic detection of question regions in PDFs.
-
-#### Question detection improvements
-
-The question region detection ignores small enumeration markers detected in the top header area to prevent misclassifying header page numbers (often on even pages) as questions. You can tune the header size via the optional `top_margin_ratio` parameter in `question_bbox.get_page_question_boxes` (default: `0.03`, i.e., top 3% of page height is ignored when looking for enumeration markers).
-
-### Performance Considerations
-
-- **Rendering**: Pages are rendered at 300 DPI for both viewing and export to maintain consistency and quality.
-- **Memory**: Large PDFs are processed page-by-page to minimize memory usage.
-- **Storage**: State files use efficient JSON format with minimal overhead.
-- **OCR Processing**: Tesseract OCR is run in parallel for faster processing of multiple masks.
-
-### Error Handling
-
-- **Corrupted PDFs**: Automatically skipped with console warnings.
-- **Password-protected PDFs**: Detected and skipped with user notification.
-- **Missing files**: Graceful degradation with error messages.
-- **Export errors**: Detailed error reporting with recovery suggestions.
-- **OCR failures**: Individual mask failures don't stop batch processing.
+The application is built with Python and PyQt6, leveraging PyMuPDF for PDF rendering and Pillow for image processing. Key modules include:
+*   `app.py`: Main application entry point.
+*   `gui.py`: Implements the graphical user interface and handles user interactions.
+*   `storage.py`: Manages state persistence for PDFs and masks.
+*   `export.py`: Handles the export of approved masks to image files.
+*   `option_label_ocr.py`: Provides OCR functionality for option label detection using Tesseract.
+*   `vector_bbox.py`: Detects and extracts bounding boxes from vector graphics.
+*   `question_bbox.py`: Automatically detects question regions in PDFs.
 
 ## Troubleshooting
 
 ### Common Issues
 
-**"No module named 'PyMuPDF'"**
-```bash
-pip install PyMuPDF
-```
+*   **Missing Python packages**: Ensure all dependencies are installed via `pip install -r requirements.txt`.
+*   **Tesseract OCR unavailable**: Install the Tesseract binary for your operating system (e.g., `brew install tesseract` on macOS, `sudo apt-get install tesseract-ocr` on Ubuntu/Debian) and then `pip install pytesseract`.
+*   **"Cannot export: pages not approved"**: All pages in a PDF must be approved before export.
+*   **PDF not rendering**: Verify the PDF is not corrupted or password-protected.
 
-**"No module named 'Pillow'"**
-```bash
-pip install Pillow
-```
+## Answer Key Verification
 
-**"Tesseract OCR unavailable"**
-```bash
-# Install Tesseract binary (system-specific)
-# Ubuntu/Debian:
-sudo apt-get install tesseract-ocr
-
-# macOS:
-brew install tesseract
-
-# Windows: Download from https://github.com/UB-Mannheim/tesseract/wiki
-
-# Then install Python wrapper:
-pip install pytesseract
-```
-
-**"Cannot export: pages not approved"**
-- Ensure all pages in the PDF are approved before attempting export
-- Check the PDF list for approval status indicators
-
-**PDF not rendering**
-- Verify the PDF is not corrupted or password-protected
-- Check console output for specific error messages
-
-### Performance Tips
-
-- **Large PDFs**: Process in smaller batches for better responsiveness
-- **Memory usage**: Close and reopen the application periodically for very large datasets
-- **Export speed**: Lower DPI settings export faster but with reduced quality
-- **OCR performance**: Ensure Tesseract is properly installed for optimal speed
-
-## Development
-
-### Project Structure
-
-```
-pdf-extraction/
-├── app.py              # Main application entry point
-├── editable_mask.py    # Interactive mask drawing and resizing
-├── export.py           # Export functionality and image processing
-├── gui.py              # GUI components and main window
-├── option_label_ocr.py # OCR functionality for option label detection
-├── question_bbox.py    # Question region detection
-├── requirements.txt    # Python dependencies
-├── storage.py          # State management and persistence
-├── vector_bbox.py      # Automatic vector graphics bounding box detection
-├── docs/
-│   └── README.md      # This documentation
-├── ocr_engines/
-│   └── tesseract_engine.py  # Tesseract OCR wrapper
-├── original_pdfs/      # Directory for original PDF files
-├── output/             # Directory for exported images and manifests
-└── test_pdfs/          # Sample PDFs for testing
-```
-
-### Architecture
-
-- **MVC Pattern**: Clear separation between GUI, logic, and data
-- **Event-driven**: PyQt signals and slots for responsive UI
-- **Modular design**: Each component handles specific functionality
-- **State management**: Centralized storage with automatic persistence
-- **OCR abstraction**: Pluggable OCR backend system (currently Tesseract-only)
+The repository includes scripts for answer key verification:
+*   `extract_answer_keys.py`: Used to extract answer keys from PDFs, with an option for debug overlays (`--debug-overlays`).
+*   `validate_results.py`: Summarizes counts and anomalies across extracted answer keys.
 
 ## License
 
