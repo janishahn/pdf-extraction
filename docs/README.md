@@ -131,6 +131,78 @@ The repository includes scripts for answer key verification:
 *   `extract_answer_keys.py`: Used to extract answer keys from PDFs, with an option for debug overlays (`--debug-overlays`).
 *   `validate_results.py`: Summarizes counts and anomalies across extracted answer keys.
 
+## Dataset Builder CLI (exam_dataset)
+
+This project includes a robust dataset builder that turns annotated Känguru PDFs into a structured JSONL dataset, an HTML report for quick QA, and an optional Parquet package with embedded images.
+
+### What it does
+
+- Renders polygon-accurate crops for:
+  - Question text (with any overlapping image masks masked to white)
+  - Option images (A–E)
+  - Associated images (figures)
+- Runs OCR on the question text crops (Mistral OCR by default).
+- Parses options from OCR text, including inline tables and LaTeX.
+- Joins answers from a yearly answer-key directory (or a single combined JSON).
+- Emits:
+  - JSONL: one record per question with text, image paths, provenance, quality flags
+  - HTML report: “Needs Review” section and all items, with images and extracted text/options
+  - Parquet (optional): a single file with all images embedded as PNG bytes
+
+### Prerequisites
+
+- Place the annotated PDFs and their companion JSONs in `original_pdfs/` (e.g., `YY_34.pdf` + `YY_34.pdf.json`).
+- Optionally provide yearly answer keys under `answer_keys/` (files `YYYY.json` as produced by `extract_answer_keys.py`).
+- For OCR, set `MISTRAL_API_KEY` in your `.env` at the project root.
+
+### Commands
+
+Build the dataset (OCR on):
+
+```bash
+uv run -q python -m exam_dataset.cli build \
+  --answer-dir answer_keys \
+  --ocr-batch-size 1 \
+  --out output/dataset_builder/dataset/dataset.jsonl \
+  --report output/dataset_builder/reports/report.html
+```
+
+Notes:
+- `--ocr-batch-size` controls per-exam OCR concurrency. For free endpoints, smaller (1–5) is more reliable.
+- To disable OCR: add `--no-ocr` (text will be empty; image-only questions are still supported).
+- To use a single combined answer key JSON instead: pass `--answer-key path/to/combined.json` instead of `--answer-dir`.
+
+Pack to Parquet with embedded images:
+
+```bash
+uv run -q python -m exam_dataset.cli pack \
+  --jsonl output/dataset_builder/dataset/dataset.jsonl \
+  --out output/dataset_builder/dataset/dataset.parquet
+```
+
+### Output structure
+
+- JSONL record (fields):
+  - `id`, `year`, `group`, `points`, `problem_number`, `problem_statement`, `language`, `multimodal`, `answer`
+  - `sol_A..sol_E` (text), `sol_A_image..sol_E_image` (paths), `associated_images` (paths)
+  - `provenance` (pdf path/hash, BBoxes, DPI map, renderer, OCR engine)
+  - `quality` (flags: `ocr_short_text`, `options_missing_or_extra`, `key_mismatch`, `needs_review`)
+
+- Report HTML:
+  - “Needs Review” section (first), then “All Items”
+  - Each item shows question crop, extracted text, extracted options (text/images), associated images, badges
+
+- Parquet file:
+  - Same core fields as JSONL
+  - Binary columns for images: `question_image`, `sol_A_image_bin..sol_E_image_bin`, and `associated_images_bin` (list<binary>)
+
+### Quality and performance
+
+- OCR retries: builder retries a small number of empty OCR results per exam.
+- Progress bars: a single global bar updates as OCR batches complete.
+- Reuse: keeps one HTTP session for OCR and one open PDF (fitz.Document) per exam for speed.
+
+
 ## License
 
 This project is provided as-is for educational and research purposes.
