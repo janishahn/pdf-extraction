@@ -33,6 +33,7 @@ def pack_jsonl_to_parquet(jsonl_path: str, out_path: str, limit: Optional[int] =
     ids: List[str] = []
     years: List[str] = []
     groups: List[str] = []
+    languages: List[str] = []
     points: List[int] = []
     problem_numbers: List[str] = []
     statements: List[str] = []
@@ -71,6 +72,7 @@ def pack_jsonl_to_parquet(jsonl_path: str, out_path: str, limit: Optional[int] =
             ids.append(str(obj.get("id")))
             years.append(str(obj.get("year")))
             groups.append(str(obj.get("group")))
+            languages.append(str(obj.get("language") or ""))
             points.append(int(obj.get("points", 0) or 0))
             problem_numbers.append(str(obj.get("problem_number") or ""))
             statements.append(str(obj.get("problem_statement") or ""))
@@ -114,6 +116,7 @@ def pack_jsonl_to_parquet(jsonl_path: str, out_path: str, limit: Optional[int] =
             "id": pa.array(ids, type=pa.string()),
             "year": pa.array(years, type=pa.string()),
             "group": pa.array(groups, type=pa.string()),
+            "language": pa.array(languages, type=pa.string()),
             "points": pa.array(points, type=pa.int32()),
             "problem_number": pa.array(problem_numbers, type=pa.string()),
             "problem_statement": pa.array(statements, type=pa.string()),

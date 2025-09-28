@@ -203,6 +203,47 @@ uv run -q python -m exam_dataset.cli pack \
 - Reuse: keeps one HTTP session for OCR and one open PDF (fitz.Document) per exam for speed.
 
 
+## Review Web App (FastAPI)
+
+Use the browser-based review tool to quickly fix OCR text, answers, and image associations. Edits are saved to an overlay file (`output/dataset_builder/dataset/edits.json`) and applied non-destructively when exporting.
+
+### Quick start (uv)
+
+- Build the dataset and report:
+  - `uv run -q python -m exam_dataset.cli build --report`
+- Run the review server and open it:
+  - `uv run -q python -m exam_dataset.cli review --open-browser`
+  - Defaults:
+    - JSONL: `output/dataset_builder/dataset/dataset.jsonl`
+    - Edits: `output/dataset_builder/dataset/edits.json`
+    - Crops: `output/dataset_builder/crops/`
+- Apply edits via the web UI:
+  - Click “Apply Edits” in the header (optionally tick “only reviewed”).
+  - A merged file `output/dataset_builder/dataset/dataset.edited.jsonl` is created and offered as a download.
+- Or apply edits via CLI:
+  - `uv run -q python -m exam_dataset.cli apply-edits --in output/dataset_builder/dataset/dataset.jsonl --edits output/dataset_builder/dataset/edits.json --out output/dataset_builder/dataset/dataset.edited.jsonl [--only-reviewed]`
+
+### What you can edit
+
+- Problem: `problem_statement`, `problem_number`, `points`, `language`.
+- Options (A–E):
+  - Text: edit; leaving blank removes it in the overlay.
+  - Image: paste a path, click “Use candidate” (suggested crop), or “Clear” to remove.
+- Associated images: manage a newline-separated list; use “Associate From Candidates” to replace/append from detected crops; “Clear All” removes all.
+- Answer: set A–E or clear.
+- Quality: toggle flags; “Save + Mark Reviewed” clears `needs_review`.
+- Annotator integration: “Open in Annotator” launches the PyQt tool for precise bbox/image fixes (re-run build afterwards).
+
+Notes:
+- Year/group come from the source annotations/filenames and typically shouldn’t be changed here.
+- Provenance and bounding boxes are read-only in the web app; use the annotator for these.
+
+### Regenerating crops after mask edits
+
+If you adjust masks in the annotator:
+- Rebuild: `uv run -q python -m exam_dataset.cli build --report`
+- In the review app, click “Reload Data”; then re-apply edits if needed using “Apply Edits”.
+
 ## License
 
 This project is provided as-is for educational and research purposes.

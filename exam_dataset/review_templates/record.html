@@ -1,0 +1,136 @@
+{% extends "layout.html" %}
+{% block content %}
+<section class="record">
+  <div class="head">
+    <div>
+      <div class="mono">{{ rid }}</div>
+      <div>Year {{ rec.year }}, Group {{ rec.group }}, Points {{ rec.points }}, Problem {{ rec.problem_number }}</div>
+      <div class="badges">
+        {% if rec.quality.needs_review %}<span class="chip bad">needs_review</span>{% endif %}
+        {% if rec.quality.options_missing_or_extra %}<span class="chip bad">opts</span>{% endif %}
+        {% if rec.quality.ocr_short_text %}<span class="chip bad">ocr</span>{% endif %}
+        {% if rec.quality.key_mismatch %}<span class="chip bad">key</span>{% endif %}
+      </div>
+    </div>
+    <div class="nav">
+      {% if prev_id %}<a class="btn" href="/record/{{ prev_id }}">← Prev</a>{% endif %}
+      {% if next_id %}<a class="btn" href="/record/{{ next_id }}">Next →</a>{% endif %}
+      <a class="btn" href="/">Back</a>
+    </div>
+  </div>
+  <div class="body">
+    <div class="left">
+      <img class="qimg" src="{{ qimg }}" alt="question">
+      <h4>Associated Images</h4>
+      <div class="assoc">
+        {% for u in assoc_urls %}<img src="{{ u }}" alt="assoc">{% endfor %}
+      </div>
+      {% if assoc_candidates %}
+      <div class="assoc-pick">
+        <h5>Associate From Candidates</h5>
+        <form onsubmit="return false;">
+          {% for c in assoc_candidates %}
+            <label style="display:block"><input type="checkbox" name="assoc_pick" value="{{ c.path }}"> {{ c.name }}</label>
+          {% endfor %}
+          <div class="actions">
+            <button class="btn" onclick="assocReplace()">Replace With Selected</button>
+            <button class="btn" onclick="assocAppend()">Append Selected</button>
+            <button class="btn" onclick="assocClearAll()">Clear All</button>
+          </div>
+        </form>
+      </div>
+      {% endif %}
+    </div>
+    <div class="right">
+      <form method="post" action="/record/{{ rid }}">
+        <div class="row">
+          <label>Problem # <input type="text" name="problem_number" value="{{ rec.problem_number }}" style="width:80px"></label>
+          <label>Points <input type="text" name="points" value="{{ rec.points }}" style="width:80px"></label>
+          <label>Language <input type="text" name="language" value="{{ rec.language }}" style="width:100px"></label>
+        </div>
+        <h4>Problem Statement</h4>
+        <textarea name="problem_statement" rows="10">{{ rec.problem_statement or '' }}</textarea>
+
+        <h4>Options</h4>
+        <div class="grid-2">
+          {% for L in ['A','B','C','D','E'] %}
+            <div class="opt">
+              <label><span class="lbl">{{ L }}</span>
+                <textarea name="sol_{{ L }}" rows="3">{{ rec['sol_'+L] or '' }}</textarea>
+              </label>
+              {% if opt_imgs.get(L) %}
+                <img class="optimg" src="{{ opt_imgs[L] }}" alt="opt{{ L }}">
+              {% endif %}
+              <div class="row">
+                <input type="text" name="sol_{{ L }}_image" placeholder="path to image (optional)" value="{{ rec['sol_'+L+'_image'] or '' }}">
+                {% if opt_candidates.get(L) %}
+                  <button class="btn" type="button" onclick="setOptImg('{{ L }}','{{ opt_candidates[L].path }}')">Use candidate</button>
+                {% endif %}
+                <button class="btn" type="button" onclick="clearOptImg('{{ L }}')">Clear</button>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+
+        <h4>Associated Image Paths</h4>
+        <textarea name="associated_images" rows="4" placeholder="one path per line">{% for p in rec.associated_images or [] %}{{ p }}
+{% endfor %}</textarea>
+
+        <div class="row">
+          <label>Answer:
+            <select name="answer">
+              <option value="" {% if not rec.answer %}selected{% endif %}></option>
+              {% for L in ['A','B','C','D','E'] %}
+              <option value="{{ L }}" {% if rec.answer == L %}selected{% endif %}>{{ L }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label><input type="checkbox" name="needs_review" {% if rec.quality.needs_review %}checked{% endif %}> needs_review</label>
+          <label><input type="checkbox" name="options_missing_or_extra" {% if rec.quality.options_missing_or_extra %}checked{% endif %}> opts</label>
+          <label><input type="checkbox" name="ocr_short_text" {% if rec.quality.ocr_short_text %}checked{% endif %}> ocr</label>
+          <label><input type="checkbox" name="key_mismatch" {% if rec.quality.key_mismatch %}checked{% endif %}> key</label>
+          <label><input type="checkbox" name="reviewed"> mark reviewed</label>
+        </div>
+
+        <label>Notes
+          <input type="text" name="notes" placeholder="optional reviewer note">
+        </label>
+
+        <div class="actions">
+          <button class="btn" type="submit" name="action" value="save">Save</button>
+          <button class="btn" type="submit" name="action" value="mark_reviewed">Save + Mark Reviewed</button>
+        </div>
+      </form>
+      <form action="/open/{{ rid }}" method="post" class="inline">
+        <button class="btn" type="submit">Open in Annotator</button>
+      </form>
+    </div>
+  </div>
+</section>
+<script>
+function setOptImg(letter, path){
+  const inp = document.querySelector(`input[name="sol_${letter}_image"]`);
+  if (inp) inp.value = path;
+}
+function clearOptImg(letter){
+  const inp = document.querySelector(`input[name="sol_${letter}_image"]`);
+  if (inp) inp.value = '';
+}
+function assocClearAll(){
+  const ta = document.querySelector('textarea[name="associated_images"]');
+  if (ta) ta.value = '';
+}
+function assocReplace(){
+  const picks = Array.from(document.querySelectorAll('input[name="assoc_pick"]:checked')).map(el=>el.value);
+  const ta = document.querySelector('textarea[name="associated_images"]').value = picks.join('\n');
+}
+function assocAppend(){
+  const picks = Array.from(document.querySelectorAll('input[name="assoc_pick"]:checked')).map(el=>el.value);
+  const ta = document.querySelector('textarea[name="associated_images"]');
+  const lines = ta.value.trim() ? ta.value.trim().split(/\n+/) : [];
+  const set = new Set(lines);
+  for (const p of picks){ set.add(p); }
+  ta.value = Array.from(set).join('\n');
+}
+</script>
+{% endblock %}

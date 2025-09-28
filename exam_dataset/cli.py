@@ -6,6 +6,7 @@ import os
 from .config import PATHS
 from .dataset_builder import run_build
 from .pdf_render import ensure_dir
+from .edits import apply_file
 
 # Load .env if present so OCR API keys are available via env vars
 try:
@@ -42,6 +43,19 @@ def main() -> None:
     pk.add_argument("--out", default=os.path.join(PATHS.dataset, "dataset.parquet"))
     pk.add_argument("--limit", type=int, default=None)
 
+    rv = sub.add_parser("review", help="Run the FastAPI review server")
+    rv.add_argument("--jsonl", default=os.path.join(PATHS.dataset, "dataset.jsonl"))
+    rv.add_argument("--edits", default=os.path.join(PATHS.dataset, "edits.json"))
+    rv.add_argument("--host", default="127.0.0.1")
+    rv.add_argument("--port", type=int, default=8000)
+    rv.add_argument("--open-browser", action="store_true")
+
+    ae = sub.add_parser("apply-edits", help="Merge edits overlay into a new JSONL")
+    ae.add_argument("--in", dest="inp", default=os.path.join(PATHS.dataset, "dataset.jsonl"))
+    ae.add_argument("--edits", default=os.path.join(PATHS.dataset, "edits.json"))
+    ae.add_argument("--out", default=os.path.join(PATHS.dataset, "dataset.edited.jsonl"))
+    ae.add_argument("--only-reviewed", action="store_true")
+
     args = parser.parse_args()
     ensure_dir(PATHS.dataset)
 
@@ -70,6 +84,22 @@ def main() -> None:
         from .pack import pack_jsonl_to_parquet
         pack_jsonl_to_parquet(args.jsonl, args.out, args.limit)
         print(f"Packed {args.jsonl} -> {args.out}")
+    elif args.cmd == "review":
+        from .review_server import create_app
+        import uvicorn  # type: ignore
+        import webbrowser
+
+        app = create_app(args.jsonl, args.edits, PATHS.crops, PATHS.dataset)
+        url = f"http://{args.host}:{args.port}"
+        if args.open_browser:
+            try:
+                webbrowser.open(url)
+            except Exception:
+                pass
+        uvicorn.run(app, host=args.host, port=int(args.port), log_level="info")
+    elif args.cmd == "apply-edits":
+        apply_file(args.inp, args.edits, args.out, only_reviewed=bool(args.only_reviewed))
+        print(f"Applied edits: {args.inp} + {args.edits} -> {args.out}")
 
 
 if __name__ == "__main__":

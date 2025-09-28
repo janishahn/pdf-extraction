@@ -8,6 +8,11 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 from .models import BBox, QuestionUnit
+try:
+    # Use storage migration/backfill when parsing GUI state files
+    from storage import load_state  # type: ignore
+except Exception:
+    load_state = None  # type: ignore
 
 
 @dataclass
@@ -106,7 +111,14 @@ def parse_exam_annotation(json_path: str, pdf_path: str) -> ExamAnnotations:
             )
     elif data.get("pages"):
         # Convert GUI state schema (pages -> masks) into questions
-        pages = data.get("pages") or {}
+        # Prefer loading via storage.load_state to migrate/backfill older files
+        pages_source = data
+        if callable(load_state):
+            try:
+                pages_source = load_state(pdf_path) or data
+            except Exception:
+                pages_source = data
+        pages = pages_source.get("pages") or {}
 
         # Helper: convert pixel coordinates (assumed ~300 DPI) to PDF points
         def px_to_pt(v: float, dpi: int = 300) -> float:
@@ -129,8 +141,8 @@ def parse_exam_annotation(json_path: str, pdf_path: str) -> ExamAnnotations:
             masks = pdat.get("masks", [])
             img_by_id: Dict[str, dict] = {}
             for m in masks:
-                # Some older state files omit type for image masks; use presence of option_label as hint
-                is_image = (m.get("type") == "image") or (m.get("type") is None and ("option_label" in m))
+                # Some older state files omit type for image masks; default missing type to image
+                is_image = (m.get("type") == "image") or (m.get("type") is None)
                 if is_image and m.get("points") and m.get("id"):
                     img_by_id[str(m.get("id"))] = m
 

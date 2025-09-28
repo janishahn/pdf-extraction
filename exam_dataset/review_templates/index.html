@@ -1,0 +1,63 @@
+{% extends "layout.html" %}
+{% block content %}
+<section>
+  <h2>Queue</h2>
+  <div class="stats">
+    <span>Total: {{ stats.total }}</span>
+    <span>Edited: {{ stats.edited }}</span>
+    <span>Needs Review: {{ stats.needs_review }}</span>
+  </div>
+  <form class="filters" method="get">
+    <label>Filter:
+      <select name="filter">
+        <option value="needs_review" {% if filter=='needs_review' %}selected{% endif %}>Needs Review</option>
+        <option value="unreviewed" {% if filter=='unreviewed' %}selected{% endif %}>Unreviewed</option>
+        <option value="all" {% if filter=='all' %}selected{% endif %}>All</option>
+      </select>
+    </label>
+    <label>Year: <input name="year" value="{{ year }}" placeholder=""></label>
+    <label>Group: <input name="group" value="{{ group }}" placeholder=""></label>
+    <label>Search: <input name="q" value="{{ q }}" placeholder="text or id"></label>
+    <button type="submit">Apply</button>
+  </form>
+  <table class="list">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Year</th>
+        <th>Group</th>
+        <th>Points</th>
+        <th>Answer</th>
+        <th>Flags</th>
+        <th>Preview</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for rec in items %}
+      <tr>
+        <td class="mono">{{ rec.id }}</td>
+        <td>{{ rec.year }}</td>
+        <td>{{ rec.group }}</td>
+        <td>{{ rec.points }}</td>
+        <td class="mono">{{ rec.answer or '' }}</td>
+        <td>
+          {% if rec.quality.needs_review %}<span class="chip bad">needs_review</span>{% endif %}
+          {% if rec.quality.options_missing_or_extra %}<span class="chip bad">opts</span>{% endif %}
+          {% if rec.quality.ocr_short_text %}<span class="chip bad">ocr</span>{% endif %}
+          {% if rec.quality.key_mismatch %}<span class="chip bad">key</span>{% endif %}
+        </td>
+        <td><img class="thumb" src="/crops/question/{{ rec.id }}.png" alt="qimg"></td>
+        <td>
+          <a class="btn" href="/record/{{ rec.id }}">Open</a>
+          <form action="/open/{{ rec.id }}" method="post" style="display:inline;">
+            <button class="btn" type="submit">Annotator</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
+

@@ -1,0 +1,9 @@
+{% extends "layout.html" %}
+{% block content %}
+<section>
+  <h2>Edited Dataset Ready</h2>
+  <p>Your merged dataset is available here:</p>
+  <p><a class="btn" href="{{ file_url }}">Download {{ file_rel }}</a></p>
+  <p><a href="/">Back to list</a></p>
+{% endblock %}
+

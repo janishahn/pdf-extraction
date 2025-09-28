@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "pymupdf>=1.24.0",
-    "Pillow>=10.3.0",
+    "pillow>=10.3.0",
     "requests>=2.32.3",
     "tqdm>=4.66.4",
     "python-dotenv>=1.0.1",
@@ -14,6 +14,10 @@ dependencies = [
     "pyqt6>=6.9.1",
     "shapely>=2.1.1",
     "pytesseract>=0.3.13",
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.30.0",
+    "jinja2>=3.1.4",
+    "python-multipart>=0.0.20",
 ]
 
 [dependency-groups]
