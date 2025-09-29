@@ -45,7 +45,7 @@ def main() -> None:
 
     rv = sub.add_parser("review", help="Run the FastAPI review server")
     rv.add_argument("--jsonl", default=os.path.join(PATHS.dataset, "dataset.jsonl"))
-    rv.add_argument("--edits", default=os.path.join(PATHS.dataset, "edits.json"))
+    rv.add_argument("--edits", default=None)
     rv.add_argument("--host", default="127.0.0.1")
     rv.add_argument("--port", type=int, default=8000)
     rv.add_argument("--open-browser", action="store_true")
@@ -89,7 +89,15 @@ def main() -> None:
         import uvicorn  # type: ignore
         import webbrowser
 
-        app = create_app(args.jsonl, args.edits, PATHS.crops, PATHS.dataset)
+        # Derive a dataset-specific edits file if none explicitly provided
+        if not args.edits:
+            jdir = os.path.dirname(args.jsonl) or PATHS.dataset
+            jstem = os.path.splitext(os.path.basename(args.jsonl))[0]
+            derived_edits = os.path.join(jdir, f"{jstem}.edits.json")
+        else:
+            derived_edits = args.edits
+
+        app = create_app(args.jsonl, derived_edits, PATHS.crops, PATHS.dataset)
         url = f"http://{args.host}:{args.port}"
         if args.open_browser:
             try:

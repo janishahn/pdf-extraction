@@ -215,11 +215,11 @@ Use the browser-based review tool to quickly fix OCR text, answers, and image as
   - `uv run -q python -m exam_dataset.cli review --open-browser`
   - Defaults:
     - JSONL: `output/dataset_builder/dataset/dataset.jsonl`
-    - Edits: `output/dataset_builder/dataset/edits.json`
+    - Edits: If not provided, derived from the JSONL name as `<stem>.edits.json` in the same folder
     - Crops: `output/dataset_builder/crops/`
 - Apply edits via the web UI:
   - Click “Apply Edits” in the header (optionally tick “only reviewed”).
-  - A merged file `output/dataset_builder/dataset/dataset.edited.jsonl` is created and offered as a download.
+  - A merged file is created next to the loaded JSONL, named `<stem>.edited.jsonl` (e.g., `dataset_full.edited.jsonl`), and offered as a download.
 - Or apply edits via CLI:
   - `uv run -q python -m exam_dataset.cli apply-edits --in output/dataset_builder/dataset/dataset.jsonl --edits output/dataset_builder/dataset/edits.json --out output/dataset_builder/dataset/dataset.edited.jsonl [--only-reviewed]`
 

@@ -61,8 +61,8 @@ def create_app(
     app.state.edits_path = edits_path
     app.state.crops_dir = crops_dir
     app.state.dataset_dir = dataset_dir
-    app.state.base_records: Dict[str, dict] = _load_base_records(jsonl_path)
-    app.state.edits: Dict[str, dict] = load_edits(edits_path)
+    app.state.base_records = _load_base_records(jsonl_path)
+    app.state.edits = load_edits(edits_path)
 
     # Static mounts for crops and dataset outputs (download edited JSONL)
     if os.path.isdir(crops_dir):
@@ -123,6 +123,7 @@ def create_app(
                 "year": year,
                 "group": group,
                 "stats": stats,
+                "dataset_name": os.path.basename(app.state.jsonl_path),
             },
         )
 
@@ -192,6 +193,7 @@ def create_app(
                 "assoc_candidates": assoc_candidates,
                 "prev_id": prev_id,
                 "next_id": next_id,
+                "dataset_name": os.path.basename(app.state.jsonl_path),
             },
         )
 
@@ -295,7 +297,10 @@ def create_app(
 
     @app.post("/apply-edits")
     async def apply_edits(request: Request, only_reviewed: Optional[str] = Form(default=None)):
-        out_path = os.path.join(app.state.dataset_dir, "dataset.edited.jsonl")
+        # Write edits next to the base dataset with a dataset-specific name
+        base_dir = os.path.dirname(app.state.jsonl_path) or app.state.dataset_dir
+        base_stem = os.path.splitext(os.path.basename(app.state.jsonl_path))[0]
+        out_path = os.path.join(base_dir, f"{base_stem}.edited.jsonl")
         try:
             apply_file(
                 app.state.jsonl_path,
@@ -321,6 +326,7 @@ def create_app(
                 "request": request,
                 "file_rel": path,
                 "file_url": f"/dataset/{path}",
+                "dataset_name": os.path.basename(app.state.jsonl_path),
             },
         )
 

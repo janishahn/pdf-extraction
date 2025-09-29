@@ -137,8 +137,6 @@ class PageScene(QGraphicsScene):
     MODE_SELECT = 0
     MODE_DRAW = 1
 
-    GRID_SIZE = 20
-
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.current_pixmap_item: Optional[QGraphicsItem] = None
@@ -164,9 +162,6 @@ class PageScene(QGraphicsScene):
         if pixmap:
             self.current_pixmap_item = self.addPixmap(pixmap)
             self.setSceneRect(self.current_pixmap_item.boundingRect())
-
-            # Draw the grid after setting the scene rect
-            self.draw_grid()
 
             # Add existing masks from page state
             for mask_data in page_state.get("masks", []):
@@ -197,26 +192,6 @@ class PageScene(QGraphicsScene):
         else:
             self.current_pixmap_item = None
             self.addText(f"Error rendering page {page_index + 1}")
-
-    def draw_grid(self) -> None:
-        """Draws a slightly opaque grid over the scene for orientation."""
-        if not self.sceneRect().isValid():
-            return
-
-        pen = QPen(QColor(100, 100, 100, 50))  # Light gray, 50 alpha (slightly opaque)
-        pen.setWidth(1)
-
-        # Draw vertical lines
-        x = self.sceneRect().left()
-        while x <= self.sceneRect().right():
-            self.addLine(x, self.sceneRect().top(), x, self.sceneRect().bottom(), pen)
-            x += self.GRID_SIZE
-
-        # Draw horizontal lines
-        y = self.sceneRect().top()
-        while y <= self.sceneRect().bottom():
-            self.addLine(self.sceneRect().left(), y, self.sceneRect().right(), y, pen)
-            y += self.GRID_SIZE
 
     def on_mask_geometry_changed(self, mask_id: str):
         if mask_id in self.current_masks:
@@ -264,13 +239,19 @@ class PageScene(QGraphicsScene):
             view = self.views()[0]
             
             if self.mode == self.MODE_SELECT:
-                view.setCursor(Qt.CursorShape.ArrowCursor)
+                cursor = Qt.CursorShape.ArrowCursor
+                view.setCursor(cursor)
+                if view.viewport():
+                    view.viewport().setCursor(cursor)
                 view.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
                 for item in self.items():
                     if isinstance(item, EditableMaskItem):
                         item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
             elif self.mode == self.MODE_DRAW:
-                view.setCursor(Qt.CursorShape.CrossCursor)
+                cursor = Qt.CursorShape.CrossCursor
+                view.setCursor(cursor)
+                if view.viewport():
+                    view.viewport().setCursor(cursor)
                 view.setDragMode(QGraphicsView.DragMode.NoDrag)
                 for item in self.items():
                     if isinstance(item, EditableMaskItem):
@@ -1006,6 +987,15 @@ class MainWindow(QMainWindow):
 
         parent.addWidget(viewer_widget)
 
+    def _set_graphics_view_cursor(self, cursor: Qt.CursorShape) -> None:
+        """Apply the requested cursor to the graphics view and its viewport."""
+        if not hasattr(self, "graphics_view") or self.graphics_view is None:
+            return
+        self.graphics_view.setCursor(cursor)
+        viewport = self.graphics_view.viewport()
+        if viewport is not None:
+            viewport.setCursor(cursor)
+
     def create_mask_dock(self):
         """Create the mask list dock widget."""
         self.mask_dock = QDockWidget("Masks", self)
@@ -1605,7 +1595,7 @@ class MainWindow(QMainWindow):
             self.page_scene.set_mode(PageScene.MODE_DRAW)
             
             # Ensure proper cursor and drag mode
-            self.graphics_view.setCursor(Qt.CursorShape.CrossCursor)
+            self._set_graphics_view_cursor(Qt.CursorShape.CrossCursor)
             self.graphics_view.setDragMode(QGraphicsView.DragMode.NoDrag)
 
             # Update action states
@@ -1620,7 +1610,7 @@ class MainWindow(QMainWindow):
             self.page_scene.set_mode(PageScene.MODE_SELECT)
             
             # Reset cursor and drag mode
-            self.graphics_view.setCursor(Qt.CursorShape.ArrowCursor)
+            self._set_graphics_view_cursor(Qt.CursorShape.ArrowCursor)
             self.graphics_view.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
 
             # Update action states
@@ -1633,6 +1623,7 @@ class MainWindow(QMainWindow):
         """Activate select/move mode and deactivate continuous draw mode."""
         self.is_continuous_draw_mode = False
         self.page_scene.set_mode(PageScene.MODE_SELECT)
+        self._set_graphics_view_cursor(Qt.CursorShape.ArrowCursor)
         self.graphics_view.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
         self.select_mode_action.setChecked(True)
         self.draw_mode_action.setChecked(False)

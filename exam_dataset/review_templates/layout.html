@@ -9,6 +9,11 @@
 <body>
   <header class="topbar">
     <div class="brand">Exam Dataset Review</div>
+    {% if dataset_name %}
+    <div class="subtitle" style="margin-left:12px; opacity:0.8; font-size:0.9em;">
+      {{ dataset_name }}
+    </div>
+    {% endif %}
     <nav>
       <a href="/">Home</a>
       <form action="/apply-edits" method="post" style="display:inline; margin-left:16px;">
