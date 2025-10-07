@@ -7,9 +7,7 @@ import question_bbox
 from editable_mask import EditableMaskItem
 from shapely.geometry import Polygon, box
 import option_label_ocr
-
-# Rendering DPI used throughout the application for PDF rasterization
-RENDER_DPI = 300
+from config import RENDER_DPI
 
 try:
     import fitz  # PyMuPDF
@@ -749,8 +747,6 @@ class MetadataDock(QDockWidget):
 
         self._main.status_bar.showMessage("Option label saved.", 3000)
 
-        self._main.status_bar.showMessage("Mask option saved.", 3000)
-
 
 class CombinedZoomButton(QWidget):
     """A combined zoom button with zoom in and zoom out functionality."""
@@ -861,8 +857,228 @@ class MainWindow(QMainWindow):
         # OCR tracking - PDFs that have been processed automatically
         self._pdf_ocr_done: set = set()
         
+        # Stage tracking
+        self.stage_combo = None
+        self.stage_complete_btn = None
+        
         self.init_ui()
         self.load_first_pdf()
+
+    def get_current_stage(self) -> int:
+        """Get the current workflow stage for the current page."""
+        if not self.pdf_states:
+            return 1
+        _, state = self.pdf_states[self.current_pdf_index]
+        page_key = str(self.current_page_index + 1)
+        if page_key in state["pages"]:
+            return state["pages"][page_key].get("workflow", {}).get("stage", 1)
+        return 1
+
+    def set_current_stage(self, stage: int) -> None:
+        """Set the current workflow stage for the current page."""
+        if not self.pdf_states:
+            return
+        pdf_path, state = self.pdf_states[self.current_pdf_index]
+        page_key = str(self.current_page_index + 1)
+        if page_key in state["pages"]:
+            if "workflow" not in state["pages"][page_key]:
+                state["pages"][page_key]["workflow"] = {}
+            old_stage = state["pages"][page_key]["workflow"].get("stage", 1)
+            state["pages"][page_key]["workflow"]["stage"] = stage
+            storage.save_state(pdf_path, state)
+            self._apply_stage_gating()
+            
+            # Trigger OCR when entering stage 4 for the first time
+            if stage == 4 and old_stage < 4:
+                if pdf_path not in self._pdf_ocr_done:
+                    self._pdf_ocr_done.add(pdf_path)
+                    self.detect_option_labels_auto()
+
+    def _advance_to_next_stage(self) -> None:
+        """Advance to the next workflow stage."""
+        current_stage = self.get_current_stage()
+        if current_stage < 6:
+            self.set_current_stage(current_stage + 1)
+            self.status_bar.showMessage(f"Advanced to stage {current_stage + 1}", 3000)
+        else:
+            self.status_bar.showMessage("Already at final stage", 3000)
+
+    def _complete_multipage_question(self) -> None:
+        """Complete the pending multi-page question."""
+        if not hasattr(self, 'pending_question_group_id') or not self.pending_question_group_id:
+            self.status_bar.showMessage("No pending multi-page question to complete", 3000)
+            return
+        
+        # Clear the pending state
+        group_id = self.pending_question_group_id
+        self.pending_question_group_id = None
+        
+        # Restore normal pen for the first segment if visible
+        if group_id in self.page_scene.current_masks:
+            original_item = self.page_scene.current_masks[group_id]
+            if hasattr(original_item, 'default_pen'):
+                original_item.setPen(original_item.default_pen)
+        
+        # Auto-disable multi-page toggle
+        if self.multi_page_question_action.isChecked():
+            self.multi_page_question_action.setChecked(False)
+        
+        self.status_bar.showMessage("Multi-page question completed without adding more segments", 3000)
+
+    def _validate_page(self, state: Dict[str, Any], page_num: int) -> Dict[str, Any]:
+        """Validate a page and return validation results.
+        
+        Parameters
+        ----------
+        state : Dict[str, Any]
+            State dictionary
+        page_num : int
+            Page number (1-based)
+            
+        Returns
+        -------
+        Dict[str, Any]
+            Dictionary with validation results:
+            - 'valid': bool - overall validity
+            - 'floating_images': List[str] - image mask IDs not associated with any question
+            - 'unlabeled_images': List[str] - image mask IDs without checked labels
+            - 'questions_without_images': List[str] - question mask IDs with no associated images
+            - 'errors': List[str] - human-readable error messages
+        """
+        page_key = str(page_num)
+        if page_key not in state["pages"]:
+            return {"valid": False, "errors": ["Page does not exist"]}
+        
+        page_data = state["pages"][page_key]
+        masks = page_data.get("masks", [])
+        
+        # Separate masks by type
+        image_masks = {m["id"]: m for m in masks if m.get("type", "image") == "image"}
+        question_masks = [m for m in masks if m.get("type") == "question"]
+        
+        # Collect all associated image IDs from questions
+        associated_image_ids = set()
+        for q_mask in question_masks:
+            associated_image_ids.update(q_mask.get("associated_image_ids", []))
+        
+        # Check for floating images (not associated with any question)
+        floating_images = []
+        if image_masks and question_masks:  # Only check if both types exist
+            for img_id in image_masks.keys():
+                if img_id not in associated_image_ids:
+                    floating_images.append(img_id)
+        
+        # Check for unlabeled images (option_label_checked == False)
+        unlabeled_images = [
+            img_id for img_id, img_mask in image_masks.items()
+            if not img_mask.get("option_label_checked", False)
+        ]
+        
+        # Check for questions without associated images
+        questions_without_images = [
+            q_mask["id"] for q_mask in question_masks
+            if not q_mask.get("associated_image_ids", [])
+        ]
+        
+        # Build error messages
+        errors = []
+        if floating_images:
+            errors.append(f"{len(floating_images)} image mask(s) not associated with any question")
+        if unlabeled_images:
+            errors.append(f"{len(unlabeled_images)} image mask(s) without checked labels")
+        if questions_without_images:
+            errors.append(f"{len(questions_without_images)} question mask(s) without associated images")
+        
+        return {
+            "valid": len(errors) == 0,
+            "floating_images": floating_images,
+            "unlabeled_images": unlabeled_images,
+            "questions_without_images": questions_without_images,
+            "errors": errors
+        }
+
+    def _can_approve_page(self, state: Dict[str, Any], page_num: int, override: bool = False) -> Tuple[bool, str]:
+        """Check if a page can be approved.
+        
+        Parameters
+        ----------
+        state : Dict[str, Any]
+            State dictionary
+        page_num : int
+            Page number (1-based)
+        override : bool, optional
+            If True, bypass validation checks
+            
+        Returns
+        -------
+        Tuple[bool, str]
+            (can_approve, reason) - reason is empty if can approve, otherwise contains error message
+        """
+        if override:
+            return True, ""
+        
+        # Check if we're in stage 5 (validation) or beyond
+        page_key = str(page_num)
+        if page_key in state["pages"]:
+            stage = state["pages"][page_key].get("workflow", {}).get("stage", 1)
+            if stage < 5:
+                return False, f"Must complete workflow stages 1-4 first (current stage: {stage})"
+        
+        # Run validation
+        validation = self._validate_page(state, page_num)
+        if not validation["valid"]:
+            return False, "; ".join(validation["errors"])
+        
+        return True, ""
+
+    def _apply_stage_gating(self) -> None:
+        """Apply action gating based on the current workflow stage."""
+        stage = self.get_current_stage()
+        
+        # Stage 1: Image pass - only image drawing/editing, destructive recompute allowed
+        # Stage 2: Question pass - question masks, no image destructive ops
+        # Stage 3: Association pass - association enabled
+        # Stage 4: Option labels pass - OCR enabled
+        # Stage 5: Final validation - checks must pass before approval
+        
+        # For now, implement basic gating - more specific gating will be added in step 6
+        if stage >= 1:
+            # Image tools available in stage 1+
+            self.draw_mode_action.setEnabled(True)
+        
+        if stage >= 2:
+            # Question tools available in stage 2+
+            self.draw_question_action.setEnabled(True)
+            self.compute_question_masks_action.setEnabled(True)
+            self.multi_page_question_action.setEnabled(True)
+        else:
+            self.draw_question_action.setEnabled(False)
+            self.compute_question_masks_action.setEnabled(False)
+            self.multi_page_question_action.setEnabled(False)
+        
+        if stage >= 3:
+            # Association available in stage 3+
+            self.associate_action.setEnabled(True)
+        else:
+            self.associate_action.setEnabled(False)
+        
+        if stage >= 4:
+            # OCR available in stage 4+
+            self.detect_labels_action.setEnabled(True)
+        else:
+            self.detect_labels_action.setEnabled(False)
+        
+        # Update stage combo to reflect current stage
+        if self.stage_combo:
+            self.stage_combo.blockSignals(True)
+            self.stage_combo.setCurrentIndex(stage - 1)
+            self.stage_combo.blockSignals(False)
+        
+        # Gate destructive operations by stage
+        if stage == 1:
+            self.recompute_masks_btn.setEnabled(True)
+        else:
+            self.recompute_masks_btn.setEnabled(False)
 
     def init_ui(self):
         """Initialize the user interface."""
@@ -1026,79 +1242,99 @@ class MainWindow(QMainWindow):
         self.mask_list_widget.itemSelectionChanged.connect(self.on_mask_list_selection_changed)
 
     def create_toolbar(self):
-        """Create the main toolbar."""
+        """Create the main toolbar with dynamic button visibility."""
         toolbar = QToolBar("Main Toolbar")
         self.addToolBar(toolbar)
 
-        self.select_mode_action = QAction("Select/Move", self, checkable=True)
+        # ===== Workflow Controls (always visible) =====
+        toolbar.addWidget(QLabel("Stage:"))
+        self.stage_combo = QComboBox()
+        self.stage_combo.addItems([
+            "1: Image Regions",
+            "2: Question Regions", 
+            "3: Association",
+            "4: Option Labels",
+            "5: Validation",
+            "6: Approval"
+        ])
+        self.stage_combo.currentIndexChanged.connect(lambda idx: self.set_current_stage(idx + 1))
+        toolbar.addWidget(self.stage_combo)
+        
+        self.stage_complete_btn = QPushButton("Complete")
+        self.stage_complete_btn.clicked.connect(self._advance_to_next_stage)
+        toolbar.addWidget(self.stage_complete_btn)
+        
+        toolbar.addSeparator()
+
+        # ===== Mode Selection (always visible) =====
+        self.select_mode_action = QAction("Select", self, checkable=True)
         self.select_mode_action.setChecked(True)
+        self.select_mode_action.setToolTip("Select/Move mode")
         self.select_mode_action.triggered.connect(self.activate_select_mode)
         toolbar.addAction(self.select_mode_action)
 
-        # Draw actions for different mask types
-        self.draw_mode_action = QAction("Draw Image Region", self, checkable=True)
+        toolbar.addSeparator()
+
+        # ===== Stage 1: Image Tools =====
+        self.draw_mode_action = QAction("Draw Image", self, checkable=True)
+        self.draw_mode_action.setToolTip("Draw image mask regions")
         self.draw_mode_action.triggered.connect(lambda checked: self.toggle_draw_mode("image", checked))
         toolbar.addAction(self.draw_mode_action)
 
-        self.draw_question_action = QAction("Draw Question Region", self, checkable=True)
+        toolbar.addSeparator()
+
+        # ===== Stage 2: Question Tools =====
+        self.draw_question_action = QAction("Draw Question", self, checkable=True)
+        self.draw_question_action.setToolTip("Draw question mask regions")
         self.draw_question_action.triggered.connect(lambda checked: self.toggle_draw_mode("question", checked))
         toolbar.addAction(self.draw_question_action)
 
-        # Automatic computation of question masks for entire PDF
-        compute_qm_action = QAction("Compute Question Masks", self)
-        compute_qm_action.triggered.connect(self.compute_question_masks)
-        toolbar.addAction(compute_qm_action)
+        self.compute_question_masks_action = QAction("Auto-Compute Q", self)
+        self.compute_question_masks_action.setToolTip("Automatically compute question masks for entire PDF")
+        self.compute_question_masks_action.triggered.connect(self.compute_question_masks)
+        toolbar.addAction(self.compute_question_masks_action)
 
-        # Multi-page question toggle placed next to compute action
-        self.multi_page_question_action = QAction("Multi-page Q", self, checkable=True)
-        self.multi_page_question_action.setToolTip("Toggle multi-page question drawing mode")
+        self.multi_page_question_action = QAction("Multi-page", self, checkable=True)
+        self.multi_page_question_action.setToolTip("Toggle multi-page question mode (or press Q)")
         toolbar.addAction(self.multi_page_question_action)
-
-        # Keyboard shortcut to toggle multi-page mode (key 'Q')
-        QShortcut(QKeySequence("Q"), self, lambda: self.multi_page_question_action.trigger())
 
         toolbar.addSeparator()
 
-        self.merge_masks_action = QAction("Merge Selected Masks", self)
-        self.merge_masks_action.triggered.connect(self.merge_selected_masks)
-        self.merge_masks_action.setEnabled(False) # Initially disabled
-        toolbar.addAction(self.merge_masks_action)
-
-        self.split_mask_action = QAction("Split Selected Mask", self)
-        self.split_mask_action.triggered.connect(self.split_selected_mask)
-        self.split_mask_action.setEnabled(False) # Initially disabled
-        toolbar.addAction(self.split_mask_action)
-
-        self.expand_mask_action = QAction("Expand Mask", self)
-        self.expand_mask_action.triggered.connect(self.expand_selected_mask)
-        self.expand_mask_action.setEnabled(False) # Initially disabled
-        toolbar.addAction(self.expand_mask_action)
-
-        self.add_mask_action = QAction("Add Selected Masks", self)
-        self.add_mask_action.triggered.connect(self.add_selected_masks)
-        toolbar.addAction(self.add_mask_action)
-
-        # Associate images with question
-        self.associate_action = QAction("Associate Images → Question", self)
+        # ===== Stage 3: Association =====
+        self.associate_action = QAction("Associate (X)", self)
+        self.associate_action.setToolTip("Associate selected images with question (X or Ctrl+L)")
         self.associate_action.triggered.connect(self.associate_selected_masks)
         toolbar.addAction(self.associate_action)
 
-        # Keyboard shortcuts for association (Ctrl+L and X)
-        QShortcut(QKeySequence("Ctrl+L"), self, self.associate_selected_masks)
-        QShortcut(QKeySequence("X"), self, self.associate_selected_masks)
-
         toolbar.addSeparator()
 
-        # OCR option label detection
-        self.detect_labels_action = QAction("Detect Option Labels", self)
+        # ===== Stage 4: OCR =====
+        self.detect_labels_action = QAction("Detect Labels", self)
+        self.detect_labels_action.setToolTip("Run OCR to detect option labels")
         self.detect_labels_action.triggered.connect(self.detect_option_labels_force)
         toolbar.addAction(self.detect_labels_action)
 
-        toolbar.addSeparator()
-
-        # OCR Engine selection - Tesseract only
-        ocr_engine_label = QLabel("OCR Engine: Tesseract")
-        toolbar.addWidget(ocr_engine_label)
+        # Keyboard shortcuts (no toolbar buttons needed - shortcuts still work)
+        QShortcut(QKeySequence("Q"), self, lambda: self.multi_page_question_action.trigger())
+        QShortcut(QKeySequence("Ctrl+L"), self, self.associate_selected_masks)
+        QShortcut(QKeySequence("X"), self, self.associate_selected_masks)
+        
+        # Keep mask manipulation actions for programmatic enabling/disabling, but not in toolbar
+        # Users can use keyboard shortcuts: M (merge), S (split), E (expand), A (add)
+        self.merge_masks_action = QAction("Merge Selected Masks", self)
+        self.merge_masks_action.triggered.connect(self.merge_selected_masks)
+        self.merge_masks_action.setEnabled(False)
+        
+        self.split_mask_action = QAction("Split Selected Mask", self)
+        self.split_mask_action.triggered.connect(self.split_selected_mask)
+        self.split_mask_action.setEnabled(False)
+        
+        self.expand_mask_action = QAction("Expand Mask", self)
+        self.expand_mask_action.triggered.connect(self.expand_selected_mask)
+        self.expand_mask_action.setEnabled(False)
+        
+        self.add_mask_action = QAction("Add Selected Masks", self)
+        self.add_mask_action.triggered.connect(self.add_selected_masks)
 
     def create_status_bar(self):
         """Create the status bar."""
@@ -1167,10 +1403,13 @@ class MainWindow(QMainWindow):
 
     def handle_enter_key(self):
         """
-        Handle Enter or Space key press - accept rectangle if pending.
+        Handle Enter or Space key press - accept rectangle if pending, or complete multi-page question.
         """
         if self.page_scene.has_pending_rectangle():
             self.accept_rectangle()
+        elif getattr(self, 'pending_question_group_id', None):
+            # Complete pending multi-page question
+            self._complete_multipage_question()
 
     def handle_escape_key(self):
         """
@@ -1208,12 +1447,6 @@ class MainWindow(QMainWindow):
             self.current_pdf_index = index
             self.current_page_index = 0
             self.update_display()
-            
-            # Trigger automatic OCR detection if not done before for this PDF
-            pdf_path, _ = self.pdf_states[self.current_pdf_index]
-            if pdf_path not in self._pdf_ocr_done:
-                self._pdf_ocr_done.add(pdf_path)
-                self.detect_option_labels_auto()
 
     def prev_pdf(self):
         """Navigate to the previous PDF."""
@@ -1393,7 +1626,17 @@ class MainWindow(QMainWindow):
         import os
         filename = os.path.basename(pdf_path)
         approved_text = " (APPROVED)" if page_state.get("approved", False) else ""
-        self.page_info_label.setText(f"{filename} - Page {page_num}/{state['page_count']}{approved_text}")
+        
+        # Add validation status
+        validation = self._validate_page(state, page_num)
+        stage = self.get_current_stage()
+        stage_text = f" | Stage {stage}"
+        if not validation["valid"] and stage >= 5:
+            validation_text = f" | ⚠ {len(validation['errors'])} issues"
+        else:
+            validation_text = ""
+        
+        self.page_info_label.setText(f"{filename} - Page {page_num}/{state['page_count']}{approved_text}{stage_text}{validation_text}")
 
         selected_mask_id = None
         if self.mask_list_widget.selectedItems():
@@ -1429,6 +1672,9 @@ class MainWindow(QMainWindow):
             if pend_id in self.page_scene.current_masks:
                 pen = QPen(QColor(255, 165, 0), 2, Qt.PenStyle.DashLine)
                 self.page_scene.current_masks[pend_id].setPen(pen)
+        
+        # Apply stage gating based on current page's workflow stage
+        self._apply_stage_gating()
 
     def update_mask_list(self):
         """Update the mask list widget for the current page."""
@@ -1455,7 +1701,7 @@ class MainWindow(QMainWindow):
                     assoc = mask_data.get("associated_image_ids", [])
                     text = f"Q {mask_data['id'][:8]} ({len(assoc)} img)"
                     # Check for multi-page grouping
-                    group_id = mask_data.get("question_id")
+                    group_id = mask_data.get("question_group_id")
                     if group_id and group_id != mask_data["id"]:
                         text += " Part of multi-page question"
                 else:  # image
@@ -1508,11 +1754,11 @@ class MainWindow(QMainWindow):
                 # First segment – create mask normally, then assign its own id as group id
                 mask_id = storage.add_mask_to_page(state, page_num, points, self.current_draw_type)
 
-                # Set its question_id to its own id so subsequent segments can reference it
+                # Set its question_group_id to its own id so subsequent segments can reference it
                 page_key = str(page_num)
                 for mask in state["pages"][page_key]["masks"]:
                     if mask["id"] == mask_id:
-                        mask["question_id"] = mask_id
+                        mask["question_group_id"] = mask_id
                         break
 
                 self.pending_question_group_id = mask_id
@@ -1523,7 +1769,7 @@ class MainWindow(QMainWindow):
                     pen = QPen(QColor(255, 165, 0), 2, Qt.PenStyle.DashLine)
                     first_item.setPen(pen)
 
-                self.status_bar.showMessage("First part of multi-page question saved. Navigate to the next page, draw the next part and confirm.", 5000)
+                self.status_bar.showMessage("First part of multi-page question saved. Navigate to next page and draw next part, or press Enter to complete.", 5000)
             else:
                 # Second (or subsequent) segment – reuse existing group id
                 question_group_id = self.pending_question_group_id
@@ -1532,7 +1778,7 @@ class MainWindow(QMainWindow):
                     page_num,
                     points,
                     self.current_draw_type,
-                    question_id=question_group_id
+                    question_group_id=question_group_id
                 )
 
                 # Clear pending state
@@ -1707,7 +1953,7 @@ class MainWindow(QMainWindow):
         # Determine if mask is part of multi-page question
         group_id_for_cascade: Optional[str] = None
 
-        # Find mask data to inspect question_id
+        # Find mask data to inspect question_group_id
         target_mask_data = None
         for p_key, p_data in state["pages"].items():
             for m in p_data["masks"]:
@@ -1718,7 +1964,7 @@ class MainWindow(QMainWindow):
                 break
 
         if target_mask_data and target_mask_data.get("type") == "question":
-            group_id_for_cascade = target_mask_data.get("question_id") or target_mask_data["id"]
+            group_id_for_cascade = target_mask_data.get("question_group_id") or target_mask_data["id"]
 
         if storage.remove_mask_from_page(state, page_num, mask_id):
             storage.save_state(pdf_path, state)
@@ -1733,7 +1979,7 @@ class MainWindow(QMainWindow):
             # Cascade delete other segments in the same group across pages
             if group_id_for_cascade and group_id_for_cascade == mask_id:
                 for p_key, p_data in state["pages"].items():
-                    masks_to_remove = [m["id"] for m in p_data["masks"] if m.get("question_id") == group_id_for_cascade and m["id"] != mask_id]
+                    masks_to_remove = [m["id"] for m in p_data["masks"] if m.get("question_group_id") == group_id_for_cascade and m["id"] != mask_id]
                     for mid in masks_to_remove:
                         storage.remove_mask_from_page(state, int(p_key), mid)
                         # If segment is currently visible, remove from scene
@@ -1756,6 +2002,21 @@ class MainWindow(QMainWindow):
         pdf_path, state = self.pdf_states[self.current_pdf_index]
         page_num = self.current_page_index + 1
 
+        # Check if page can be approved
+        can_approve, reason = self._can_approve_page(state, page_num)
+        if not can_approve:
+            # Ask if user wants to override
+            reply = QMessageBox.question(
+                self,
+                "Approval Validation Failed",
+                f"Cannot approve page due to:\n{reason}\n\nOverride and approve anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                self.status_bar.showMessage("Page approval cancelled", 3000)
+                return
+        
         storage.approve_page(state, page_num)
         storage.save_state(pdf_path, state)
 
@@ -1808,123 +2069,37 @@ class MainWindow(QMainWindow):
     def on_mask_selected_in_scene(self, mask_id: str):
         """Handle mask selection from the scene and update list selection."""
         self.mask_list_widget.blockSignals(True)
-        selected_id = mask_id  # Preserve the actual selected id from the signal
         
         # First clear any existing associated highlights
         for mask in self.page_scene.current_masks.values():
             if hasattr(mask, 'clear_associated_display'):
                 mask.clear_associated_display()
         
-        if selected_id == "": # No mask selected, clear all selections
+        if mask_id == "":  # No mask selected
             self.mask_list_widget.clearSelection()
-            self.status_bar.showMessage("No mask selected", 3000)
-            selected_count = 0 # No masks selected
+            selected_mask_ids = []
         else:
             # Get all currently selected items in the scene
             selected_scene_items = self.page_scene.selectedItems()
-            selected_mask_ids = []
+            selected_mask_ids = [
+                item.mask_id for item in selected_scene_items
+                if hasattr(item, 'mask_id') and hasattr(item, 'mask_type')
+            ]
             
-            # Find all associated masks for the selected masks
-            associated_image_ids = set()
-            associated_question_ids = set()
-            _, state = self.pdf_states[self.current_pdf_index]
-            page_key = str(self.current_page_index + 1)
-            if page_key in state["pages"]:
-                page_data = state["pages"][page_key]
-                
-                # First collect all selected mask IDs and their types
-                selected_image_ids = set()
-                selected_question_ids = set()
-                for item in selected_scene_items:
-                    if hasattr(item, 'mask_id') and hasattr(item, 'mask_type'):
-                        selected_mask_ids.append(item.mask_id)
-                        if item.mask_type == "image":
-                            selected_image_ids.add(item.mask_id)
-                        else:  # question
-                            selected_question_ids.add(item.mask_id)
-                
-                # Then find all associated masks
-                for mask in page_data.get("masks", []):
-                    m_id = mask.get("id")
-                    m_type = mask.get("type", "image")
-                    
-                    if m_type == "question":
-                        # If this question mask is selected, add its associated images
-                        if m_id in selected_question_ids:
-                            for img_id in mask.get("associated_image_ids", []):
-                                if img_id not in selected_image_ids:
-                                    associated_image_ids.add(img_id)
-                        # If any of this question's images are selected, add the question
-                        elif any(img_id in selected_image_ids for img_id in mask.get("associated_image_ids", [])):
-                            associated_question_ids.add(m_id)
-            
-            selected_count = len(selected_mask_ids)
+            # Clear and update list selection
             self.mask_list_widget.clearSelection()
-
-            # Highlight associated masks in the scene
-            for assoc_id in associated_image_ids.union(associated_question_ids):
-                if assoc_id in self.page_scene.current_masks:
-                    mask_item = self.page_scene.current_masks[assoc_id]
-                    if hasattr(mask_item, 'show_as_associated'):
-                        mask_item.show_as_associated()
-
-            # Select corresponding items in the list and show selection
             for i in range(self.mask_list_widget.count()):
                 item = self.mask_list_widget.item(i)
                 item_mask_id = item.data(Qt.ItemDataRole.UserRole)
                 if item_mask_id in selected_mask_ids:
                     item.setSelected(True)
-                    # Scroll to the first selected item
-                    if item_mask_id == selected_id:
+                    if item_mask_id == mask_id:
                         self.mask_list_widget.scrollToItem(item)
-
-            # Update status bar based on number of selections
-            if selected_count == 1:
-                mask_item = self.page_scene.current_masks.get(selected_id)
-                if mask_item:
-                    # Rectangle masks expose rect(); polygon masks use sceneBoundingRect()
-                    if hasattr(mask_item, 'rect'):
-                        bbox = mask_item.rect()
-                    else:
-                        bbox = mask_item.sceneBoundingRect()
-                    width = round(bbox.width())
-                    height = round(bbox.height())
-                    
-                    # Add associated mask count to the status message
-                    total_associated = len(associated_image_ids) + len(associated_question_ids)
-                    associated_text = f" ({total_associated} associated masks)" if total_associated > 0 else ""
-                    
-                    self.status_bar.showMessage(
-                        f"Selected mask: {selected_id[:8]}... (Width: {width}px, Height: {height}px){associated_text}"
-                    )
-                    self.mask_properties_dock.update_properties(mask_item)
-                    # Update metadata dock for image mask option edits
-                    self._update_metadata_dock_mask(selected_id)
-                else:
-                    self.status_bar.showMessage(f"Selected mask: {selected_id[:8]}...")
-                    self.mask_properties_dock.update_properties(None) # Should not happen if mask_id is valid
-            elif selected_count > 1:
-                self.status_bar.showMessage(f"Selected {selected_count} masks")
-                self.mask_properties_dock.update_properties(None) # Clear properties for multi-selection
-                if self.metadata_dock:
-                    self.metadata_dock.update_mask_selection(None)
-            else:
-                self.status_bar.showMessage("No mask selected", 3000)
-                self.mask_properties_dock.update_properties(None) # Clear properties for no selection
-                if self.metadata_dock:
-                    self.metadata_dock.update_mask_selection(None)
         
-        can_merge = selected_count >= 2
-        self.merge_masks_btn.setEnabled(can_merge)
-        self.merge_masks_action.setEnabled(can_merge)
-
-        can_split = selected_count == 1
-        self.split_mask_btn.setEnabled(can_split)
-        self.split_mask_action.setEnabled(can_split)
-
-        can_expand = selected_count == 1
-        self.expand_mask_action.setEnabled(can_expand)
-
+        # Collect associations and update UI
+        _, _, associated_image_ids, associated_question_ids = self._collect_associations_for_selection(selected_mask_ids)
+        self._update_selection_ui(len(selected_mask_ids), selected_mask_ids, associated_image_ids, associated_question_ids)
+        
         self.mask_list_widget.blockSignals(False)
 
     def on_mask_list_selection_changed(self):
@@ -1940,109 +2115,22 @@ class MainWindow(QMainWindow):
         self.page_scene.blockSignals(True)
         self.page_scene.clearSelection()
 
-        # Get current page state to find associations
-        _, state = self.pdf_states[self.current_pdf_index]
-        page_key = str(self.current_page_index + 1)
-        associated_image_ids = set()
-        associated_question_ids = set()
-
-        if page_key in state["pages"]:
-            page_data = state["pages"][page_key]
-            
-            # First identify selected image and question masks
-            selected_image_ids = set()
-            selected_question_ids = set()
-            for mask_id in selected_mask_ids:
-                mask_item = self.page_scene.current_masks.get(mask_id)
-                if mask_item:
-                    if mask_item.mask_type == "image":
-                        selected_image_ids.add(mask_id)
-                    else:  # question
-                        selected_question_ids.add(mask_id)
-            
-            # Then find all associated masks
-            for mask in page_data.get("masks", []):
-                mask_id = mask.get("id")
-                mask_type = mask.get("type", "image")
-                
-                if mask_type == "question":
-                    # If this question mask is selected, add its associated images
-                    if mask_id in selected_question_ids:
-                        for img_id in mask.get("associated_image_ids", []):
-                            if img_id not in selected_image_ids:
-                                associated_image_ids.add(img_id)
-                    # If any of this question's images are selected, add the question
-                    elif any(img_id in selected_image_ids for img_id in mask.get("associated_image_ids", [])):
-                        associated_question_ids.add(mask_id)
-
-        # Select all corresponding masks in the scene
-        selected_count = 0
-        selected_mask_item: Optional[EditableMaskItem] = None
+        # Select corresponding masks in the scene
+        first_selected_item = None
         for mask_id in selected_mask_ids:
             if mask_id in self.page_scene.current_masks:
                 mask_item = self.page_scene.current_masks[mask_id]
                 mask_item.setSelected(True)
-                selected_count += 1
-                if selected_count == 1: # Keep track of the first selected item for properties display
-                    selected_mask_item = mask_item
-        
-        # Highlight associated masks
-        for mask_id in associated_image_ids.union(associated_question_ids):
-            if mask_id in self.page_scene.current_masks:
-                mask_item = self.page_scene.current_masks[mask_id]
-                if hasattr(mask_item, 'show_as_associated'):
-                    mask_item.show_as_associated()
-
-        # Update status bar and properties dock based on number of selections
-        if selected_count == 1:
-            if selected_mask_item:
-                if hasattr(selected_mask_item, 'rect'):
-                    rect = selected_mask_item.rect()
-                else:
-                    rect = selected_mask_item.sceneBoundingRect()
-                width = round(rect.width())
-                height = round(rect.height())
-                
-                # Add associated mask count to the status message
-                total_associated = len(associated_image_ids) + len(associated_question_ids)
-                associated_text = f" ({total_associated} associated masks)" if total_associated > 0 else ""
-                
-                self.status_bar.showMessage(
-                    f"Selected mask: {selected_mask_item.mask_id[:8]}... (Width: {width}px, Height: {height}px){associated_text}"
-                )
-                self.mask_properties_dock.update_properties(selected_mask_item)
-                self._update_metadata_dock_mask(selected_mask_item.mask_id)
-            else:
-                self.status_bar.showMessage("No mask selected", 3000) # Should not happen
-                self.mask_properties_dock.update_properties(None)
-                if self.metadata_dock:
-                    self.metadata_dock.update_mask_selection(None)
-        elif selected_count > 1:
-            self.status_bar.showMessage(f"Selected {selected_count} masks")
-            self.mask_properties_dock.update_properties(None) # Clear properties for multi-selection
-            if self.metadata_dock:
-                self.metadata_dock.update_mask_selection(None)
-        else:
-            self.status_bar.showMessage("No mask selected", 3000)
-            self.mask_properties_dock.update_properties(None) # Clear properties for no selection
-            if self.metadata_dock:
-                self.metadata_dock.update_mask_selection(None)
-
-        can_merge = selected_count >= 2
-        self.merge_masks_btn.setEnabled(can_merge)
-        self.merge_masks_action.setEnabled(can_merge)
-
-        can_split = selected_count == 1
-        self.split_mask_btn.setEnabled(can_split)
-        self.split_mask_action.setEnabled(can_split)
-
-        can_expand = selected_count == 1
-        self.expand_mask_action.setEnabled(can_expand)
+                if first_selected_item is None:
+                    first_selected_item = mask_item
 
         # Ensure the first selected mask is visible
-        if selected_mask_item:
-            view = self.graphics_view
-            view.ensureVisible(selected_mask_item)
+        if first_selected_item:
+            self.graphics_view.ensureVisible(first_selected_item)
+
+        # Collect associations and update UI
+        _, _, associated_image_ids, associated_question_ids = self._collect_associations_for_selection(selected_mask_ids)
+        self._update_selection_ui(len(selected_mask_ids), selected_mask_ids, associated_image_ids, associated_question_ids)
 
         self.page_scene.blockSignals(False)
 
@@ -2057,6 +2145,130 @@ class MainWindow(QMainWindow):
                 mask_data = m
                 break
         self.metadata_dock.update_mask_selection(mask_data)
+
+    def _collect_associations_for_selection(self, selected_mask_ids: List[str]) -> Tuple[set, set, set, set]:
+        """Collect association information for selected masks.
+        
+        Parameters
+        ----------
+        selected_mask_ids : List[str]
+            List of selected mask IDs
+            
+        Returns
+        -------
+        Tuple[set, set, set, set]
+            (selected_image_ids, selected_question_ids, associated_image_ids, associated_question_ids)
+        """
+        if not self.pdf_states or not selected_mask_ids:
+            return set(), set(), set(), set()
+        
+        _, state = self.pdf_states[self.current_pdf_index]
+        page_key = str(self.current_page_index + 1)
+        
+        if page_key not in state["pages"]:
+            return set(), set(), set(), set()
+        
+        page_data = state["pages"][page_key]
+        
+        # Identify selected image and question masks
+        selected_image_ids = set()
+        selected_question_ids = set()
+        
+        for mask_id in selected_mask_ids:
+            mask_item = self.page_scene.current_masks.get(mask_id)
+            if mask_item:
+                if mask_item.mask_type == "image":
+                    selected_image_ids.add(mask_id)
+                else:  # question
+                    selected_question_ids.add(mask_id)
+        
+        # Find all associated masks
+        associated_image_ids = set()
+        associated_question_ids = set()
+        
+        for mask in page_data.get("masks", []):
+            mask_id = mask.get("id")
+            mask_type = mask.get("type", "image")
+            
+            if mask_type == "question":
+                # If this question mask is selected, add its associated images
+                if mask_id in selected_question_ids:
+                    for img_id in mask.get("associated_image_ids", []):
+                        if img_id not in selected_image_ids:
+                            associated_image_ids.add(img_id)
+                # If any of this question's images are selected, add the question
+                elif any(img_id in selected_image_ids for img_id in mask.get("associated_image_ids", [])):
+                    associated_question_ids.add(mask_id)
+        
+        return selected_image_ids, selected_question_ids, associated_image_ids, associated_question_ids
+
+    def _update_selection_ui(self, selected_count: int, selected_mask_ids: List[str], 
+                           associated_image_ids: set, associated_question_ids: set) -> None:
+        """Update UI elements based on selection.
+        
+        Parameters
+        ----------
+        selected_count : int
+            Number of selected masks
+        selected_mask_ids : List[str]
+            List of selected mask IDs
+        associated_image_ids : set
+            Set of associated image mask IDs
+        associated_question_ids : set
+            Set of associated question mask IDs
+        """
+        # Highlight associated masks in the scene
+        for assoc_id in associated_image_ids.union(associated_question_ids):
+            if assoc_id in self.page_scene.current_masks:
+                mask_item = self.page_scene.current_masks[assoc_id]
+                if hasattr(mask_item, 'show_as_associated'):
+                    mask_item.show_as_associated()
+        
+        # Update status bar and properties dock
+        if selected_count == 1:
+            selected_id = selected_mask_ids[0]
+            mask_item = self.page_scene.current_masks.get(selected_id)
+            if mask_item:
+                if hasattr(mask_item, 'rect'):
+                    bbox = mask_item.rect()
+                else:
+                    bbox = mask_item.sceneBoundingRect()
+                width = round(bbox.width())
+                height = round(bbox.height())
+                
+                total_associated = len(associated_image_ids) + len(associated_question_ids)
+                associated_text = f" ({total_associated} associated masks)" if total_associated > 0 else ""
+                
+                self.status_bar.showMessage(
+                    f"Selected mask: {selected_id[:8]}... (Width: {width}px, Height: {height}px){associated_text}"
+                )
+                self.mask_properties_dock.update_properties(mask_item)
+                self._update_metadata_dock_mask(selected_id)
+            else:
+                self.status_bar.showMessage(f"Selected mask: {selected_id[:8]}...")
+                self.mask_properties_dock.update_properties(None)
+        elif selected_count > 1:
+            self.status_bar.showMessage(f"Selected {selected_count} masks")
+            self.mask_properties_dock.update_properties(None)
+            if self.metadata_dock:
+                self.metadata_dock.update_mask_selection(None)
+        else:
+            self.status_bar.showMessage("No mask selected", 3000)
+            self.mask_properties_dock.update_properties(None)
+            if self.metadata_dock:
+                self.metadata_dock.update_mask_selection(None)
+        
+        # Update toolbar button states
+        can_merge = selected_count >= 2
+        self.merge_masks_btn.setEnabled(can_merge)
+        self.merge_masks_action.setEnabled(can_merge)
+
+        can_split = selected_count == 1
+        self.split_mask_btn.setEnabled(can_split)
+        self.split_mask_action.setEnabled(can_split)
+
+        can_expand = selected_count == 1
+        self.expand_mask_action.setEnabled(can_expand)
 
     def _get_bounding_box_from_points(self, points: List[List[float]]) -> QRectF:
         """
@@ -2245,8 +2457,35 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "No PDFs", "No PDFs are loaded.")
             return
 
+        # Check stage - only allow in stage 1
+        stage = self.get_current_stage()
+        if stage > 1:
+            QMessageBox.warning(
+                self,
+                "Stage Restriction",
+                f"Recomputing all masks is only available in Stage 1 (Image Regions).\n"
+                f"Current stage: {stage}.\n\n"
+                f"This prevents accidentally overwriting work done in later stages."
+            )
+            return
+
         pdf_path, state = self.pdf_states[self.current_pdf_index]
         pdf_filename = os.path.basename(pdf_path)
+
+        # Strong confirmation
+        reply = QMessageBox.warning(
+            self,
+            "Destructive Operation Warning",
+            f"This will DELETE ALL existing masks for {pdf_filename} and recompute from vector graphics.\n\n"
+            f"This operation cannot be undone.\n\n"
+            f"Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        
+        if reply != QMessageBox.StandardButton.Yes:
+            self.status_bar.showMessage("Recompute cancelled", 3000)
+            return
 
         self.status_bar.showMessage(f"Recomputing masks for {pdf_filename}...", 0) # 0 means stay until new message
 
@@ -2564,8 +2803,36 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "No PDFs", "No PDFs are loaded.")
             return
 
+        # Check stage - only allow in stage 2
+        stage = self.get_current_stage()
+        if stage < 2 or stage > 2:
+            QMessageBox.warning(
+                self,
+                "Stage Restriction",
+                f"Computing question masks is only available in Stage 2 (Question Regions).\n"
+                f"Current stage: {stage}.\n\n"
+                f"Move to Stage 2 before using this feature."
+            )
+            return
+
         pdf_path, state = self.pdf_states[self.current_pdf_index]
         pdf_filename = os.path.basename(pdf_path)
+
+        # Strong confirmation
+        reply = QMessageBox.warning(
+            self,
+            "Destructive Operation Warning",
+            f"This will DELETE ALL existing question masks for {pdf_filename} and recompute from text layout.\n"
+            f"Image masks will be preserved.\n\n"
+            f"This operation cannot be undone.\n\n"
+            f"Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        
+        if reply != QMessageBox.StandardButton.Yes:
+            self.status_bar.showMessage("Compute question masks cancelled", 3000)
+            return
 
         self.status_bar.showMessage(f"Computing question masks for {pdf_filename}...", 0)
 

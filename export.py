@@ -16,6 +16,7 @@ except ImportError:
     raise
 
 from storage import load_state
+from config import RENDER_DPI
 
 
 def compute_bounding_box(points: List[List[float]]) -> Tuple[float, float, float, float]:
@@ -211,7 +212,7 @@ def export_all(pdf_path: str, dpi: int = 300) -> Dict[str, Any]:
     total_exported = 0
     
     # GUI render DPI (from gui.py render_page function)
-    gui_render_dpi = 300.0
+    gui_render_dpi = float(RENDER_DPI)
     scale_factor = dpi / gui_render_dpi
     
     # Process each page

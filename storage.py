@@ -68,6 +68,7 @@ def create_initial_state(pdf_path: str, page_count: int) -> Dict[str, Any]:
         "pages": {
             str(i + 1): {
                 "approved": False,
+                "workflow": {"stage": 1},
                 "masks": []
             }
             for i in range(page_count)
@@ -78,6 +79,8 @@ def create_initial_state(pdf_path: str, page_count: int) -> Dict[str, Any]:
 
 def migrate_old_state_format(old_state: Dict[str, Any]) -> Dict[str, Any]:
     """Migrate old state format (list-based pages) to new format (dict-based pages).
+    
+    Also migrates question_id → question_group_id for multi-page questions.
     
     Parameters
     ----------
@@ -90,6 +93,15 @@ def migrate_old_state_format(old_state: Dict[str, Any]) -> Dict[str, Any]:
         New state dictionary with pages as a dict
     """
     if isinstance(old_state.get("pages"), dict):
+        # Already dict-based, but may need field migration
+        for page_data in old_state["pages"].values():
+            # Backfill workflow if missing
+            if "workflow" not in page_data:
+                page_data["workflow"] = {"stage": 1}
+            # Migrate question_id → question_group_id
+            for mask in page_data.get("masks", []):
+                if "question_id" in mask and "question_group_id" not in mask:
+                    mask["question_group_id"] = mask.pop("question_id")
         return old_state
     
     if not isinstance(old_state.get("pages"), list):
@@ -100,6 +112,7 @@ def migrate_old_state_format(old_state: Dict[str, Any]) -> Dict[str, Any]:
         page_num = str(page["page_number"])
         new_pages[page_num] = {
             "approved": page["approved"],
+            "workflow": {"stage": 1},
             "masks": []
         }
         for mask in page.get("masks", []):
@@ -107,6 +120,9 @@ def migrate_old_state_format(old_state: Dict[str, Any]) -> Dict[str, Any]:
             # Ensure backward compatibility – default to image type if missing
             if "type" not in new_mask:
                 new_mask["type"] = "image"
+            # Migrate question_id → question_group_id
+            if "question_id" in new_mask and "question_group_id" not in new_mask:
+                new_mask["question_group_id"] = new_mask.pop("question_id")
             new_pages[page_num]["masks"].append(new_mask)
     
     return {
@@ -151,8 +167,10 @@ def load_state(pdf_path: str) -> Dict[str, Any]:
                     if meta:
                         migrated_state["pdf_metadata"] = meta
 
-                # Backfill image mask fields if missing (non-destructive)
+                # Backfill workflow and image mask fields if missing (non-destructive)
                 for p_data in migrated_state.get("pages", {}).values():
+                    if "workflow" not in p_data:
+                        p_data["workflow"] = {"stage": 1}
                     for m in p_data.get("masks", []):
                         m_type = m.get("type", "image")
                         if m_type == "image":
@@ -160,6 +178,9 @@ def load_state(pdf_path: str) -> Dict[str, Any]:
                                 m["option_label"] = ""
                             if "option_label_checked" not in m:
                                 m["option_label_checked"] = False
+                        # Migrate question_id → question_group_id if needed
+                        if "question_id" in m and "question_group_id" not in m:
+                            m["question_group_id"] = m.pop("question_id")
 
                 if migrated_state != state:
                     save_state(pdf_path, migrated_state)
@@ -231,7 +252,7 @@ def ensure_state_exists(pdf_path: str, page_count: int) -> Dict[str, Any]:
     return load_state(pdf_path)
 
 
-def create_mask(points: List[List[float]], mask_type: str = "image", associated_image_ids: Optional[List[str]] = None, question_id: Optional[str] = None) -> Dict[str, Any]:
+def create_mask(points: List[List[float]], mask_type: str = "image", associated_image_ids: Optional[List[str]] = None, question_group_id: Optional[str] = None) -> Dict[str, Any]:
     """Create a new mask with a unique ID and metadata.
     
     Parameters
@@ -242,8 +263,8 @@ def create_mask(points: List[List[float]], mask_type: str = "image", associated_
         Semantic type of the mask ("image" or "question"), by default "image"
     associated_image_ids : Optional[List[str]], optional
         List of image‐mask IDs associated with the question mask. Only relevant if mask_type == "question".
-    question_id : Optional[str], optional
-        Identifier for grouping multiple masks into a single question mask
+    question_group_id : Optional[str], optional
+        Identifier for grouping multiple masks into a single multi-page question
     
     Returns
     -------
@@ -255,11 +276,11 @@ def create_mask(points: List[List[float]], mask_type: str = "image", associated_
         "type": mask_type,
         "points": points,
     }
-    # If a grouping/question identifier is provided, store it. This allows
+    # If a grouping identifier is provided, store it. This allows
     # representing questions that span multiple pages while keeping each
     # drawn polygon as an individual mask.
-    if question_id is not None:
-        mask["question_id"] = question_id
+    if question_group_id is not None:
+        mask["question_group_id"] = question_group_id
     if mask_type == "question":
         mask["associated_image_ids"] = associated_image_ids or []
     else:
@@ -271,7 +292,7 @@ def create_mask(points: List[List[float]], mask_type: str = "image", associated_
     return mask
 
 
-def add_mask_to_page(state: Dict[str, Any], page_num: int, points: List[List[float]], mask_type: str = "image", associated_image_ids: Optional[List[str]] = None, question_id: Optional[str] = None) -> str:
+def add_mask_to_page(state: Dict[str, Any], page_num: int, points: List[List[float]], mask_type: str = "image", associated_image_ids: Optional[List[str]] = None, question_group_id: Optional[str] = None) -> str:
     """Add a mask to a specific page.
     
     Parameters
@@ -286,8 +307,8 @@ def add_mask_to_page(state: Dict[str, Any], page_num: int, points: List[List[flo
         Semantic type of the mask ("image" or "question"), by default "image"
     associated_image_ids : Optional[List[str]], optional
         List of associated image mask IDs when creating a question mask
-    question_id : Optional[str], optional
-        Identifier for grouping multiple masks into a single question mask
+    question_group_id : Optional[str], optional
+        Identifier for grouping multiple masks into a single multi-page question
     
     Returns
     -------
@@ -298,7 +319,7 @@ def add_mask_to_page(state: Dict[str, Any], page_num: int, points: List[List[flo
     if page_key not in state["pages"]:
         raise ValueError(f"Page {page_num} does not exist in state")
     
-    mask = create_mask(points, mask_type, associated_image_ids, question_id)
+    mask = create_mask(points, mask_type, associated_image_ids, question_group_id)
     state["pages"][page_key]["masks"].append(mask)
     return mask["id"]
 
@@ -347,6 +368,7 @@ def ensure_page_exists(state: Dict[str, Any], page_num: int) -> None:
     if page_key not in state["pages"]:
         state["pages"][page_key] = {
             "approved": False,
+            "workflow": {"stage": 1},
             "masks": []
         }
 
