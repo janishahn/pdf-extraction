@@ -149,7 +149,11 @@ def parse_exam_annotation(json_path: str, pdf_path: str) -> ExamAnnotations:
             for m in masks:
                 if m.get("type") != "question" or not m.get("points"):
                     continue
-                qid = str(m.get("question_id") or f"p{page_str}_{m.get('id')}")
+                qid = str(
+                    m.get("question_group_id")
+                    or m.get("question_id")
+                    or f"p{page_str}_{m.get('id')}"
+                )
                 g = all_grouped.setdefault(qid, {"boxes": [], "assoc": [], "opts": {}, "pn": None, "first_box": None})
 
                 pts_px = m.get("points") or []
@@ -186,20 +190,6 @@ def parse_exam_annotation(json_path: str, pdf_path: str) -> ExamAnnotations:
                     else:
                         g["assoc"].append(ibb)
 
-                # If still missing labeled options, pull from other image masks on this page
-                if len(g["opts"]) < 5:
-                    for im_id, im in img_by_id.items():
-                        if str(im_id) in [str(a) for a in assoc_ids]:
-                            continue
-                        if not im.get("points"):
-                            continue
-                        lab = str(im.get("option_label") or "").strip().upper()
-                        if lab in {"A", "B", "C", "D", "E"} and lab not in g["opts"]:
-                            ipts_px = im.get("points") or []
-                            ix0, iy0, ix1, iy1 = bbox_from_points(ipts_px)
-                            ipts_pt = [(px_to_pt(px), px_to_pt(py)) for px, py in ipts_px]
-                            ibb = BBox(page_index=page_index, x0=px_to_pt(ix0), y0=px_to_pt(iy0), x1=px_to_pt(ix1), y1=px_to_pt(iy1), points=ipts_pt)
-                            g["opts"][lab] = ibb
 
         # Assign sequential problem numbers for any missing
         # Sort by page_index, y0, x0 of the first text box
