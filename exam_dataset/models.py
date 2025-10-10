@@ -44,6 +44,7 @@ class Quality:
     ocr_short_text: bool = False
     options_missing_or_extra: bool = False
     key_mismatch: bool = False
+    answer_missing: bool = False
     needs_review: bool = False
 
 

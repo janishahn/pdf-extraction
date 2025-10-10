@@ -16,7 +16,14 @@ def write_html_report(items: List[Tuple[str, DatasetRecord]], out_path: str) -> 
                 no_opts = False
                 break
         q = rec.quality
-        return no_opts or q.needs_review or q.ocr_short_text or q.key_mismatch or q.options_missing_or_extra
+        return (
+            no_opts
+            or q.needs_review
+            or q.ocr_short_text
+            or q.key_mismatch
+            or q.options_missing_or_extra
+            or q.answer_missing
+        )
 
     def option_li(letter: str, rec: DatasetRecord) -> str:
         opt_text = getattr(rec, f"sol_{letter}")
@@ -36,6 +43,8 @@ def write_html_report(items: List[Tuple[str, DatasetRecord]], out_path: str) -> 
             badges.append("<span class='bad'>ocr_short</span>")
         if rec.quality.key_mismatch:
             badges.append("<span class='bad'>key_mismatch</span>")
+        if rec.quality.answer_missing:
+            badges.append("<span class='bad'>answer_missing</span>")
         return " ".join(badges)
 
     def render_item(img_path: str, rec: DatasetRecord) -> List[str]:

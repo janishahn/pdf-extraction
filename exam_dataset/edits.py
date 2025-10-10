@@ -84,6 +84,15 @@ def merge_record(base: dict, patch: dict) -> dict:
             merged[k] = patch[k]
     if "quality" in patch and isinstance(patch["quality"], dict):
         merged["quality"] = _merge_quality(base.get("quality"), patch["quality"])  # type: ignore[arg-type]
+    quality = dict(merged.get("quality") or {})
+    answer = merged.get("answer")
+    answer_missing = (
+        answer is None
+        or (isinstance(answer, str) and answer.strip() == "")
+        or (isinstance(answer, (list, tuple, set)) and len(answer) == 0)
+    )
+    quality["answer_missing"] = answer_missing
+    merged["quality"] = quality
     return merged
 
 
@@ -96,8 +105,16 @@ def needs_review(rec: dict) -> bool:
             no_opts = False
             break
     q = rec.get("quality") or {}
+    answer = rec.get("answer")
+    no_answer = (
+        answer is None
+        or (isinstance(answer, str) and answer.strip() == "")
+        or (isinstance(answer, (list, tuple, set)) and len(answer) == 0)
+    )
     return bool(
         no_opts
+        or q.get("answer_missing")
+        or no_answer
         or q.get("needs_review")
         or q.get("ocr_short_text")
         or q.get("key_mismatch")

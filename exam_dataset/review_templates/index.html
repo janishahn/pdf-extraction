@@ -46,6 +46,7 @@
           {% if rec.quality.options_missing_or_extra %}<span class="chip bad">opts</span>{% endif %}
           {% if rec.quality.ocr_short_text %}<span class="chip bad">ocr</span>{% endif %}
           {% if rec.quality.key_mismatch %}<span class="chip bad">key</span>{% endif %}
+          {% if rec.quality.answer_missing %}<span class="chip bad">answer</span>{% endif %}
         </td>
         <td><img class="thumb" src="/crops/question/{{ rec.id }}.png" alt="qimg"></td>
         <td>
@@ -60,4 +61,3 @@
   </table>
 </section>
 {% endblock %}
-

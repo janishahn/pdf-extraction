@@ -273,7 +273,7 @@ uv run -q python -m exam_dataset.cli pack \
   - `id`, `year`, `group`, `points`, `problem_number`, `problem_statement`, `language`, `multimodal`, `answer`
   - `sol_A..sol_E` (text), `sol_A_image..sol_E_image` (paths), `associated_images` (paths)
   - `provenance` (pdf path/hash, BBoxes, DPI map, renderer, OCR engine)
-  - `quality` (flags: `ocr_short_text`, `options_missing_or_extra`, `key_mismatch`, `needs_review`)
+- `quality` (flags: `ocr_short_text`, `options_missing_or_extra`, `key_mismatch`, `answer_missing`, `needs_review`)
 
 - Report HTML:
   - “Needs Review” section (first), then “All Items”

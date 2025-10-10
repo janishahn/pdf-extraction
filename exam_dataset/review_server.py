@@ -73,12 +73,26 @@ def create_app(
     if os.path.isdir(static_dir):
         app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
+    def _ensure_answer_flag(rec: dict) -> dict:
+        out = dict(rec)
+        quality = dict(out.get("quality") or {})
+        answer = out.get("answer")
+        answer_missing = (
+            answer is None
+            or (isinstance(answer, str) and answer.strip() == "")
+            or (isinstance(answer, (list, tuple, set)) and len(answer) == 0)
+        )
+        quality["answer_missing"] = answer_missing
+        out["quality"] = quality
+        return out
+
     def merged_record(rid: str) -> Optional[dict]:
         base = app.state.base_records.get(rid)
         if not base:
             return None
         p = app.state.edits.get(rid, {})
-        return merge_record(base, p) if p else base
+        merged = merge_record(base, p) if p else dict(base)
+        return _ensure_answer_flag(merged)
 
     def list_records(filter_type: str = "needs_review", q: str = "", year: str = "", group: str = "") -> List[dict]:
         recs = []

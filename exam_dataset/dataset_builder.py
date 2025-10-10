@@ -108,8 +108,12 @@ def assemble_record(
         quality.options_missing_or_extra = True
         quality.needs_review = True
 
-    if answer and answer not in letters:
+    normalized_answer = answer.strip() if isinstance(answer, str) else None
+    if normalized_answer and normalized_answer not in letters:
         quality.key_mismatch = True
+        quality.needs_review = True
+    if not normalized_answer:
+        quality.answer_missing = True
         quality.needs_review = True
 
     rec_id = f"{exam.exam_id}_{q.question_id}"
@@ -315,6 +319,7 @@ def run_build(
         multimodal_true = sum(1 for r in out_records if r.get("multimodal"))
         ocr_nonempty = sum(1 for r in out_records if (r.get("problem_statement") or ""))
         needs_review_true = sum(1 for r in out_records if (r.get("quality") or {}).get("needs_review"))
+        answer_missing_true = sum(1 for r in out_records if (r.get("quality") or {}).get("answer_missing"))
         options_full = 0
         for r in out_records:
             have = 0
@@ -330,6 +335,7 @@ def run_build(
         print(f"Answers joined: {answers_present}")
         print(f"Multimodal (any images): {multimodal_true}")
         print(f"Needs review: {needs_review_true}")
+        print(f"Answer missing flagged: {answer_missing_true}")
         print(f"JSONL: {output_jsonl}")
         if report_html:
             print(f"Report: {report_html}")
