@@ -9,7 +9,7 @@
   </div>
   <form class="filters" method="get">
     <label>Filter:
-      <select name="filter">
+      <select name="filter" onchange="this.form.requestSubmit()">
         <option value="needs_review" {% if filter=='needs_review' %}selected{% endif %}>Needs Review</option>
         <option value="unreviewed" {% if filter=='unreviewed' %}selected{% endif %}>Unreviewed</option>
         <option value="all" {% if filter=='all' %}selected{% endif %}>All</option>
