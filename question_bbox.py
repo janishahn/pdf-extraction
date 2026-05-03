@@ -3,11 +3,13 @@ from typing import List, Tuple
 import fitz
 
 
-def _find_enumeration_indices(lines: List[Tuple[float, float, float, float]],
-                             max_enum_width: float,
-                             left_margin_max: float,
-                             min_height: float,
-                             top_min_y: float) -> List[int]:
+def _find_enumeration_indices(
+    lines: List[Tuple[float, float, float, float]],
+    max_enum_width: float,
+    left_margin_max: float,
+    min_height: float,
+    top_min_y: float,
+) -> List[int]:
     """Return indices in lines that look like question enumeration markers.
 
     Parameters
@@ -32,7 +34,11 @@ def _find_enumeration_indices(lines: List[Tuple[float, float, float, float]],
     for idx, (x0, y0, x1, y1) in enumerate(lines):
         if y0 < top_min_y:
             continue
-        if (x1 - x0) <= max_enum_width and x0 <= left_margin_max and (y1 - y0) >= min_height:
+        if (
+            (x1 - x0) <= max_enum_width
+            and x0 <= left_margin_max
+            and (y1 - y0) >= min_height
+        ):
             indices.append(idx)
     return indices
 
@@ -138,7 +144,11 @@ def get_page_question_boxes(
             # Exclude header markers within the top margin
             if sy0 < top_min_y:
                 continue
-            if (sx1 - sx0) <= max_enum_width and sx0 <= left_margin_max and (sy1 - sy0) >= min_height:
+            if (
+                (sx1 - sx0) <= max_enum_width
+                and sx0 <= left_margin_max
+                and (sy1 - sy0) >= min_height
+            ):
                 first_text = line[5] if len(line) > 5 else ""
                 if first_text.startswith("("):
                     # Skip answer choice line
@@ -148,7 +158,7 @@ def get_page_question_boxes(
         if not enum_indices:
             # fallback try whole-line metrics
             enum_indices = _find_enumeration_indices(
-                [l[:4] for l in lines],
+                [line[:4] for line in lines],
                 max_enum_width,
                 left_margin_max,
                 min_height,
@@ -160,8 +170,8 @@ def get_page_question_boxes(
             groups: List[List[Tuple[float, float, float, float]]] = []
             current: List[Tuple[float, float, float, float]] = []
             prev_y1 = None
-            for idx, l in enumerate(lines):
-                x0, y0, x1, y1 = l[:4]
+            for idx, line in enumerate(lines):
+                x0, y0, x1, y1 = line[:4]
                 if prev_y1 is None or (y0 - prev_y1) <= line_gap_threshold:
                     current.append((x0, y0, x1, y1))
                 else:
@@ -198,4 +208,4 @@ def get_page_question_boxes(
 
         return boxes
     finally:
-        doc.close() 
+        doc.close()

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import tempfile
 from datetime import datetime, timezone
 from typing import Dict, Iterable, Tuple
@@ -132,7 +131,12 @@ def _iter_jsonl(path: str) -> Iterable[Tuple[dict, str]]:
             yield obj, line
 
 
-def apply_file(base_jsonl_path: str, edits_path: str, out_jsonl_path: str, only_reviewed: bool = False) -> None:
+def apply_file(
+    base_jsonl_path: str,
+    edits_path: str,
+    out_jsonl_path: str,
+    only_reviewed: bool = False,
+) -> None:
     """Stream-apply edits to a JSONL file and write a new JSONL.
 
     - If only_reviewed is True, only include records where edits.meta.reviewed is True, otherwise use base record.
@@ -190,7 +194,11 @@ def record_patch_from_form(base: dict, form: dict) -> dict:
     # Optional numeric points
     if "points" in form:
         try:
-            val = int(form.get("points")) if str(form.get("points")).strip() != "" else None
+            val = (
+                int(form.get("points"))
+                if str(form.get("points")).strip() != ""
+                else None
+            )
         except Exception:
             val = None
         if val is not None:
@@ -205,7 +213,13 @@ def record_patch_from_form(base: dict, form: dict) -> dict:
     for k in ["sol_A", "sol_B", "sol_C", "sol_D", "sol_E"]:
         if k in form:
             set_if_changed(k, _norm_text(form.get(k)))
-    for k in ["sol_A_image", "sol_B_image", "sol_C_image", "sol_D_image", "sol_E_image"]:
+    for k in [
+        "sol_A_image",
+        "sol_B_image",
+        "sol_C_image",
+        "sol_D_image",
+        "sol_E_image",
+    ]:
         if k in form:
             set_if_changed(k, _norm_text(form.get(k)))
     if "answer" in form:
@@ -214,13 +228,22 @@ def record_patch_from_form(base: dict, form: dict) -> dict:
     # associated_images: comma-separated list
     if "associated_images" in form:
         raw = form.get("associated_images") or ""
-        arr = [s.strip() for s in raw.split("\n") if s.strip()] if isinstance(raw, str) else []
+        arr = (
+            [s.strip() for s in raw.split("\n") if s.strip()]
+            if isinstance(raw, str)
+            else []
+        )
         set_if_changed("associated_images", arr)
 
     # quality flags
     q_base = base.get("quality") or {}
     q_patch: dict = {}
-    for qk in ["needs_review", "options_missing_or_extra", "ocr_short_text", "key_mismatch"]:
+    for qk in [
+        "needs_review",
+        "options_missing_or_extra",
+        "ocr_short_text",
+        "key_mismatch",
+    ]:
         val = True if (form.get(qk) in ("on", "true", True)) else False
         if bool(q_base.get(qk, False)) != val:
             q_patch[qk] = val
@@ -228,7 +251,6 @@ def record_patch_from_form(base: dict, form: dict) -> dict:
         patch["quality"] = q_patch
 
     # meta.reviewed + notes
-    meta_base = {}
     m_patch: dict = {}
     if form.get("reviewed") is not None:
         rev = True if (form.get("reviewed") in ("on", "true", True)) else False

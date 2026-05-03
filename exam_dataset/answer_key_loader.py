@@ -3,8 +3,11 @@ import glob
 import json
 import os
 from typing import Dict, Tuple, Optional, List
+
 # Mapping: (exam_id, problem_number) -> answer letter
 AnswerMap = Dict[Tuple[str, str], str]
+
+
 def load_answer_key(path: str) -> AnswerMap:
     """Load answer key JSON.
     Supported formats:
@@ -27,7 +30,11 @@ def load_answer_key(path: str) -> AnswerMap:
             if exam_id and pn and ans:
                 mapping[(exam_id, pn)] = str(ans).strip().upper()
     return mapping
-def lookup_answer(mapping: AnswerMap, exam_id: str, problem_number: str) -> Optional[str]:
+
+
+def lookup_answer(
+    mapping: AnswerMap, exam_id: str, problem_number: str
+) -> Optional[str]:
     return mapping.get((exam_id, problem_number))
 
 
@@ -47,7 +54,9 @@ def _label_is_numeric(label: str) -> bool:
         return False
 
 
-def build_answer_map_from_year_files(keys_dir: str, original_pdfs_dir: str) -> AnswerMap:
+def build_answer_map_from_year_files(
+    keys_dir: str, original_pdfs_dir: str
+) -> AnswerMap:
     """Build an AnswerMap by joining per-year answer key JSONs to exam PDFs.
 
     - keys_dir: directory containing files like "YYYY.json" with structure from extract_answer_keys.py
@@ -60,7 +69,9 @@ def build_answer_map_from_year_files(keys_dir: str, original_pdfs_dir: str) -> A
     - Store answers under keys (exam_id, problem_number) where exam_id is the PDF stem and problem_number is either
       the ordinal index string or the numeric label string when available.
     """
-    from storage import extract_pdf_metadata_from_filename  # local import to avoid circulars
+    from storage import (
+        extract_pdf_metadata_from_filename,
+    )  # local import to avoid circulars
 
     mapping: AnswerMap = {}
     pdf_paths: List[str] = sorted(glob.glob(os.path.join(original_pdfs_dir, "*.pdf")))

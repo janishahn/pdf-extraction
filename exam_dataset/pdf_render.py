@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 import fitz
 from PIL import Image, ImageDraw
@@ -47,8 +47,17 @@ def render_bbox(
         use_dpi = dpi if dpi is not None else dpi_for_bbox(pt_w, pt_h)
         scale = use_dpi / 72.0
         mat = fitz.Matrix(scale, scale)
-        pm = page.get_pixmap(matrix=mat, clip=rect, alpha=False, colorspace=fitz.csGRAY if (grayscale or RENDER.grayscale) else fitz.csRGB)
-        img = Image.frombytes("L" if (grayscale or RENDER.grayscale) else "RGB", [pm.width, pm.height], pm.samples)
+        pm = page.get_pixmap(
+            matrix=mat,
+            clip=rect,
+            alpha=False,
+            colorspace=fitz.csGRAY if (grayscale or RENDER.grayscale) else fitz.csRGB,
+        )
+        img = Image.frombytes(
+            "L" if (grayscale or RENDER.grayscale) else "RGB",
+            [pm.width, pm.height],
+            pm.samples,
+        )
         img.info["dpi"] = (use_dpi, use_dpi)
     finally:
         if _doc is not None:

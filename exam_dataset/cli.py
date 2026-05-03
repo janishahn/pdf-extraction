@@ -31,14 +31,30 @@ def main() -> None:
         help="Directory with per-year answer key JSONs (e.g., 'answer_keys')",
         default=None,
     )
-    b.add_argument("--report", help="Path to HTML report", default=os.path.join(PATHS.reports, "report.html"))
-    b.add_argument("--ocr-batch-size", type=int, default=5, help="Max concurrent OCR requests per exam (default: 5)")
+    b.add_argument(
+        "--report",
+        help="Path to HTML report",
+        default=os.path.join(PATHS.reports, "report.html"),
+    )
+    b.add_argument(
+        "--ocr-batch-size",
+        type=int,
+        default=5,
+        help="Max concurrent OCR requests per exam (default: 5)",
+    )
 
-    m = sub.add_parser("answers-merge", help="Merge per-year answer keys into a combined JSON mapping exam->problem->answer")
+    m = sub.add_parser(
+        "answers-merge",
+        help="Merge per-year answer keys into a combined JSON mapping exam->problem->answer",
+    )
     m.add_argument("--keys-dir", default=os.path.join(os.getcwd(), "answer_keys"))
-    m.add_argument("--out", default=os.path.join(PATHS.dataset, "combined_answers.json"))
+    m.add_argument(
+        "--out", default=os.path.join(PATHS.dataset, "combined_answers.json")
+    )
 
-    pk = sub.add_parser("pack", help="Pack a JSONL dataset into a Parquet file with embedded images")
+    pk = sub.add_parser(
+        "pack", help="Pack a JSONL dataset into a Parquet file with embedded images"
+    )
     pk.add_argument("--jsonl", default=os.path.join(PATHS.dataset, "dataset.jsonl"))
     pk.add_argument("--out", default=os.path.join(PATHS.dataset, "dataset.parquet"))
     pk.add_argument("--limit", type=int, default=None)
@@ -51,9 +67,13 @@ def main() -> None:
     rv.add_argument("--open-browser", action="store_true")
 
     ae = sub.add_parser("apply-edits", help="Merge edits overlay into a new JSONL")
-    ae.add_argument("--in", dest="inp", default=os.path.join(PATHS.dataset, "dataset.jsonl"))
+    ae.add_argument(
+        "--in", dest="inp", default=os.path.join(PATHS.dataset, "dataset.jsonl")
+    )
     ae.add_argument("--edits", default=os.path.join(PATHS.dataset, "edits.json"))
-    ae.add_argument("--out", default=os.path.join(PATHS.dataset, "dataset.edited.jsonl"))
+    ae.add_argument(
+        "--out", default=os.path.join(PATHS.dataset, "dataset.edited.jsonl")
+    )
     ae.add_argument("--only-reviewed", action="store_true")
 
     args = parser.parse_args()
@@ -82,6 +102,7 @@ def main() -> None:
         print(f"Wrote combined answers to {args.out}")
     elif args.cmd == "pack":
         from .pack import pack_jsonl_to_parquet
+
         pack_jsonl_to_parquet(args.jsonl, args.out, args.limit)
         print(f"Packed {args.jsonl} -> {args.out}")
     elif args.cmd == "review":
@@ -106,7 +127,9 @@ def main() -> None:
                 pass
         uvicorn.run(app, host=args.host, port=int(args.port), log_level="info")
     elif args.cmd == "apply-edits":
-        apply_file(args.inp, args.edits, args.out, only_reviewed=bool(args.only_reviewed))
+        apply_file(
+            args.inp, args.edits, args.out, only_reviewed=bool(args.only_reviewed)
+        )
         print(f"Applied edits: {args.inp} + {args.edits} -> {args.out}")
 
 

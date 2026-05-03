@@ -19,6 +19,7 @@ except ImportError:
 from storage import ensure_state_exists
 from gui import MainWindow
 
+
 def get_pdf_files(directory: str) -> List[str]:
     """Get all PDF files in the specified directory.
 
@@ -47,6 +48,7 @@ def get_pdf_files(directory: str) -> List[str]:
 
     return sorted(pdf_files)
 
+
 def get_page_count(pdf_path: str) -> int:
     """Get the number of pages in a PDF file.
 
@@ -68,6 +70,7 @@ def get_page_count(pdf_path: str) -> int:
     except Exception as e:
         print(f"Error reading PDF {pdf_path}: {e}")
         return 0
+
 
 def initialize_pdf_states(pdf_files: List[str]) -> List[Tuple[str, Dict[str, Any]]]:
     """Initialize JSON states for all PDF files.
@@ -95,9 +98,12 @@ def initialize_pdf_states(pdf_files: List[str]) -> List[Tuple[str, Dict[str, Any
         state = ensure_state_exists(pdf_path, page_count)
         pdf_states.append((pdf_path, state))
 
-        print(f"  Pages: {page_count}, State: {'Loaded' if os.path.exists(f'{pdf_path}.json') else 'Created'}")
+        print(
+            f"  Pages: {page_count}, State: {'Loaded' if os.path.exists(f'{pdf_path}.json') else 'Created'}"
+        )
 
     return pdf_states
+
 
 def main():
     """Main application entry point."""
@@ -106,9 +112,9 @@ def main():
     )
     parser.add_argument(
         "pdf_directory",
-        nargs='?',  # Makes the argument optional
-        default=None, # Sets default to None if not provided
-        help="Path to directory containing PDF files (optional)"
+        nargs="?",  # Makes the argument optional
+        default=None,  # Sets default to None if not provided
+        help="Path to directory containing PDF files (optional)",
     )
 
     args = parser.parse_args()
@@ -121,11 +127,15 @@ def main():
         if args.pdf_directory is None:
             selected_dir = QFileDialog.getExistingDirectory(
                 None,  # Parent widget (can be None if no main window yet)
-                "Select Directory Containing PDF Files", # Dialog title
-                os.getcwd()  # Starting directory for the dialog
+                "Select Directory Containing PDF Files",  # Dialog title
+                os.getcwd(),  # Starting directory for the dialog
             )
             if not selected_dir:  # User cancelled the dialog
-                QMessageBox.information(None, "Information", "No directory selected. Application will now exit.")
+                QMessageBox.information(
+                    None,
+                    "Information",
+                    "No directory selected. Application will now exit.",
+                )
                 sys.exit(0)
             target_directory = selected_dir
         else:
@@ -135,7 +145,9 @@ def main():
         pdf_files = get_pdf_files(target_directory)
 
         if not pdf_files:
-            QMessageBox.critical(None, "Error", f"No PDF files found in: {target_directory}")
+            QMessageBox.critical(
+                None, "Error", f"No PDF files found in: {target_directory}"
+            )
             sys.exit(1)
 
         print(f"Found {len(pdf_files)} PDF file(s) in {target_directory}")
@@ -163,6 +175,7 @@ def main():
     except Exception as e:
         QMessageBox.critical(None, "Unexpected Error", f"Unexpected error: {e}")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

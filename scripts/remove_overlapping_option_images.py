@@ -149,17 +149,17 @@ def main() -> int:
                 )
 
     before = _records_with_overlap(input_path)
-    print(
-        f"Records with same-letter text+image overlap before: {before}"
-    )
+    print(f"Records with same-letter text+image overlap before: {before}")
 
     corrected_count = 0
     output_path.parent.mkdir(parents=True, exist_ok=True)
     subset_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with input_path.open("r", encoding="utf-8") as src, \
-            output_path.open("w", encoding="utf-8") as dst_all, \
-            subset_path.open("w", encoding="utf-8") as dst_subset:
+    with (
+        input_path.open("r", encoding="utf-8") as src,
+        output_path.open("w", encoding="utf-8") as dst_all,
+        subset_path.open("w", encoding="utf-8") as dst_subset,
+    ):
         for raw in src:
             line = raw.strip()
             if not line:

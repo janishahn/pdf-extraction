@@ -25,7 +25,9 @@ def _read_image_bytes(path: Optional[str]) -> Optional[bytes]:
         return None
 
 
-def pack_jsonl_to_parquet(jsonl_path: str, out_path: str, limit: Optional[int] = None) -> None:
+def pack_jsonl_to_parquet(
+    jsonl_path: str, out_path: str, limit: Optional[int] = None
+) -> None:
     """Pack dataset JSONL into a Parquet file with embedded image bytes.
 
     Columns include core fields, option texts, binary columns for images, and list<binary> for associated images.
@@ -55,14 +57,14 @@ def pack_jsonl_to_parquet(jsonl_path: str, out_path: str, limit: Optional[int] =
     # Count total lines for progress bar
     with open(jsonl_path, "r", encoding="utf-8") as f:
         total_lines = sum(1 for line in f if line.strip())
-    
+
     if limit:
         total_lines = min(total_lines, limit)
 
     with open(jsonl_path, "r", encoding="utf-8") as f:
         pbar = tqdm(total=total_lines, desc="Packing dataset", unit="entries")
         processed = 0
-        
+
         for i, line in enumerate(f, start=1):
             line = line.strip()
             if not line:
@@ -105,10 +107,10 @@ def pack_jsonl_to_parquet(jsonl_path: str, out_path: str, limit: Optional[int] =
 
             processed += 1
             pbar.update(1)
-            
+
             if limit and processed >= int(limit):
                 break
-        
+
         pbar.close()
 
     table = pa.table(

@@ -50,7 +50,9 @@ def write_html_report(items: List[Tuple[str, DatasetRecord]], out_path: str) -> 
     def render_item(img_path: str, rec: DatasetRecord) -> List[str]:
         out: List[str] = []
         out.append("<div class='card'>")
-        out.append(f"<div class='head'><span class='qid'>{html.escape(rec.id)}</span><span class='meta'>Pts: {rec.points} | Ans: {html.escape(rec.answer or '')}</span><span class='badges'>{quality_badges(rec)}</span></div>")
+        out.append(
+            f"<div class='head'><span class='qid'>{html.escape(rec.id)}</span><span class='meta'>Pts: {rec.points} | Ans: {html.escape(rec.answer or '')}</span><span class='badges'>{quality_badges(rec)}</span></div>"
+        )
         out.append("<div class='body'>")
         out.append(f"<div class='qimg'><img src='{img_path}' alt='question'></div>")
         out.append("<div class='qtext'>")

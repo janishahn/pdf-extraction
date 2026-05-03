@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from fastapi import FastAPI, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
@@ -54,7 +54,9 @@ def create_app(
     dataset_dir = dataset_dir or PATHS.dataset
 
     app = FastAPI(title="Exam Dataset Review")
-    templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "review_templates"))
+    templates = Jinja2Templates(
+        directory=os.path.join(os.path.dirname(__file__), "review_templates")
+    )
 
     # State
     app.state.jsonl_path = jsonl_path
@@ -94,7 +96,9 @@ def create_app(
         merged = merge_record(base, p) if p else dict(base)
         return _ensure_answer_flag(merged)
 
-    def list_records(filter_type: str = "needs_review", q: str = "", year: str = "", group: str = "") -> List[dict]:
+    def list_records(
+        filter_type: str = "needs_review", q: str = "", year: str = "", group: str = ""
+    ) -> List[dict]:
         recs = []
         qnorm = (q or "").strip().lower()
         for rid, base in app.state.base_records.items():
@@ -103,7 +107,9 @@ def create_app(
                 continue
             if group and str(m.get("group")) != str(group):
                 continue
-            if qnorm and qnorm not in (str(m.get("problem_statement") or "").lower() + " " + rid.lower()):
+            if qnorm and qnorm not in (
+                str(m.get("problem_statement") or "").lower() + " " + rid.lower()
+            ):
                 continue
             flag = needs_review(m)
             if filter_type == "needs_review":
@@ -120,12 +126,22 @@ def create_app(
         return recs
 
     @app.get("/", response_class=HTMLResponse)
-    def index(request: Request, filter: str = "needs_review", q: str = "", year: str = "", group: str = ""):
+    def index(
+        request: Request,
+        filter: str = "needs_review",
+        q: str = "",
+        year: str = "",
+        group: str = "",
+    ):
         items = list_records(filter, q, year, group)
         stats = {
             "total": len(app.state.base_records),
             "edited": len(app.state.edits),
-            "needs_review": sum(1 for _id in app.state.base_records if needs_review(merged_record(_id) or app.state.base_records[_id])),
+            "needs_review": sum(
+                1
+                for _id in app.state.base_records
+                if needs_review(merged_record(_id) or app.state.base_records[_id])
+            ),
         }
         return templates.TemplateResponse(
             "index.html",
@@ -155,13 +171,20 @@ def create_app(
             v = rec.get(f"sol_{L}_image")
             if v:
                 # If absolute path within crops, try to map to /crops
-                if isinstance(v, str) and os.path.isabs(v) and os.path.commonpath([v, app.state.crops_dir]) == app.state.crops_dir:
+                if (
+                    isinstance(v, str)
+                    and os.path.isabs(v)
+                    and os.path.commonpath([v, app.state.crops_dir])
+                    == app.state.crops_dir
+                ):
                     rel = os.path.relpath(v, app.state.crops_dir)
                     opt_imgs[L] = f"/crops/{rel}"
                 else:
                     opt_imgs[L] = v
             # Suggest known crop for this letter
-            cand = os.path.join(app.state.crops_dir, "option_image", f"{rid}_opt{L}.png")
+            cand = os.path.join(
+                app.state.crops_dir, "option_image", f"{rid}_opt{L}.png"
+            )
             if os.path.exists(cand):
                 opt_candidates[L] = {
                     "path": cand,
@@ -170,7 +193,11 @@ def create_app(
         assoc_urls: List[str] = []
         assoc_candidates: List[dict] = []
         for p in rec.get("associated_images") or []:
-            if isinstance(p, str) and os.path.isabs(p) and os.path.commonpath([p, app.state.crops_dir]) == app.state.crops_dir:
+            if (
+                isinstance(p, str)
+                and os.path.isabs(p)
+                and os.path.commonpath([p, app.state.crops_dir]) == app.state.crops_dir
+            ):
                 assoc_urls.append(f"/crops/{os.path.relpath(p, app.state.crops_dir)}")
             else:
                 assoc_urls.append(str(p))
@@ -180,11 +207,13 @@ def create_app(
             try:
                 for name in sorted(os.listdir(assoc_dir)):
                     if name.startswith(f"{rid}_img") and name.endswith(".png"):
-                        assoc_candidates.append({
-                            "path": os.path.join(assoc_dir, name),
-                            "url": f"/crops/assoc_image/{name}",
-                            "name": name,
-                        })
+                        assoc_candidates.append(
+                            {
+                                "path": os.path.join(assoc_dir, name),
+                                "url": f"/crops/assoc_image/{name}",
+                                "name": name,
+                            }
+                        )
             except Exception:
                 pass
 
@@ -297,7 +326,9 @@ def create_app(
     def open_in_annotator(rid: str):
         rec = merged_record(rid)
         if not rec:
-            return JSONResponse({"ok": False, "error": "record not found"}, status_code=404)
+            return JSONResponse(
+                {"ok": False, "error": "record not found"}, status_code=404
+            )
         pdf = rec.get("provenance", {}).get("pdf_path")
         try:
             cmd = [sys.executable, os.path.join(os.getcwd(), "gui.py")]
@@ -310,7 +341,9 @@ def create_app(
             return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
     @app.post("/apply-edits")
-    async def apply_edits(request: Request, only_reviewed: Optional[str] = Form(default=None)):
+    async def apply_edits(
+        request: Request, only_reviewed: Optional[str] = Form(default=None)
+    ):
         # Write edits next to the base dataset with a dataset-specific name
         base_dir = os.path.dirname(app.state.jsonl_path) or app.state.dataset_dir
         base_stem = os.path.splitext(os.path.basename(app.state.jsonl_path))[0]
@@ -320,16 +353,30 @@ def create_app(
                 app.state.jsonl_path,
                 app.state.edits_path,
                 out_path,
-                only_reviewed=True if (only_reviewed in ("on", "true", True)) else False,
+                only_reviewed=True
+                if (only_reviewed in ("on", "true", True))
+                else False,
             )
             # Ensure dataset mount exists
-            if not any(r.mount_path == "/dataset" for r in app.router.routes if hasattr(r, "mount_path")):
+            if not any(
+                r.mount_path == "/dataset"
+                for r in app.router.routes
+                if hasattr(r, "mount_path")
+            ):
                 if os.path.isdir(app.state.dataset_dir):
-                    app.mount("/dataset", StaticFiles(directory=app.state.dataset_dir), name="dataset")
+                    app.mount(
+                        "/dataset",
+                        StaticFiles(directory=app.state.dataset_dir),
+                        name="dataset",
+                    )
             # Show link to download
-            return RedirectResponse(url=f"/download?path={os.path.basename(out_path)}", status_code=303)
+            return RedirectResponse(
+                url=f"/download?path={os.path.basename(out_path)}", status_code=303
+            )
         except Exception as e:
-            return HTMLResponse(f"<h3>Apply failed</h3><pre>{str(e)}</pre>", status_code=500)
+            return HTMLResponse(
+                f"<h3>Apply failed</h3><pre>{str(e)}</pre>", status_code=500
+            )
 
     @app.get("/download", response_class=HTMLResponse)
     def download(request: Request, path: str):

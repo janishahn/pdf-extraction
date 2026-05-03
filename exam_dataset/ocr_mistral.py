@@ -40,7 +40,9 @@ class MistralOCR:
         # Reuse a single HTTP session with connection pooling
         self.session = requests.Session()
         try:
-            adapter = requests.adapters.HTTPAdapter(pool_connections=16, pool_maxsize=16, max_retries=0)
+            adapter = requests.adapters.HTTPAdapter(
+                pool_connections=16, pool_maxsize=16, max_retries=0
+            )
             self.session.mount("https://", adapter)
             self.session.mount("http://", adapter)
         except Exception:
@@ -108,11 +110,17 @@ class MistralOCR:
                 data = resp.json()
                 text = self._extract_text_from_response(data)
                 if text or attempt == OCR.retry_limit:
-                    return OcrResult(text=text, model=self.model, raw=data if isinstance(data, dict) else None)
+                    return OcrResult(
+                        text=text,
+                        model=self.model,
+                        raw=data if isinstance(data, dict) else None,
+                    )
             except Exception as e:
                 last_err = e
                 if attempt == OCR.retry_limit:
                     raise
             time.sleep(1.5 * (attempt + 1))
 
-        raise last_err if last_err else RuntimeError("OCR failed with no further details")
+        raise (
+            last_err if last_err else RuntimeError("OCR failed with no further details")
+        )

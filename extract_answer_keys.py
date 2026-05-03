@@ -37,13 +37,17 @@ from typing import Any, Sequence, TypeAlias
 try:
     import fitz  # PyMuPDF
 except ImportError:
-    print("Error: PyMuPDF is required. Install with: pip install PyMuPDF", file=sys.stderr)
+    print(
+        "Error: PyMuPDF is required. Install with: pip install PyMuPDF", file=sys.stderr
+    )
     raise
 
 try:
     from PIL import Image, ImageDraw, ImageFont
 except ImportError:
-    print("Error: Pillow is required. Install with: pip install Pillow", file=sys.stderr)
+    print(
+        "Error: Pillow is required. Install with: pip install Pillow", file=sys.stderr
+    )
     raise
 
 # ------------------------------ Regexes ------------------------------------
@@ -58,6 +62,7 @@ Word: TypeAlias = tuple[float, float, float, float, str]
 
 
 # ----------------------------- Data Models ---------------------------------
+
 
 @dataclass
 class Heading:
@@ -132,7 +137,9 @@ class YearAccumulator:
                 "counts": len(order_unique),
             }
             if missing:
-                gg["missing_answers"] = sorted(list(set(missing)), key=lambda x: (x[0].isalpha(), x))
+                gg["missing_answers"] = sorted(
+                    list(set(missing)), key=lambda x: (x[0].isalpha(), x)
+                )
             grade_groups[group] = gg
 
         return {
@@ -145,6 +152,7 @@ class YearAccumulator:
 
 
 # ------------------------------ Utilities ----------------------------------
+
 
 def atomic_write_json(path: Path, obj: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -184,10 +192,7 @@ def guess_scheme(labels: Sequence[str]) -> str:
 
 def is_valid_label(s: str) -> bool:
     s = clean_text(s)
-    return bool(
-        re.match(r"^[0-9]{1,2}$", s)
-        or re.match(r"^[A-C][0-9]{1,2}$", s)
-    )
+    return bool(re.match(r"^[0-9]{1,2}$", s) or re.match(r"^[A-C][0-9]{1,2}$", s))
 
 
 def detect_year(page: fitz.Page, prior_year: int | None) -> int | None:
@@ -282,6 +287,7 @@ def associate_group(headings: list[Heading], bbox: fitz.Rect) -> str | None:
 
 # -------------------------- Table Extraction (fitz) -------------------------
 
+
 def extract_tables_via_fitz(page: fitz.Page) -> list[RowPair]:
     rowpairs: list[RowPair] = []
     try:
@@ -307,7 +313,9 @@ def extract_tables_via_fitz(page: fitz.Page) -> list[RowPair]:
             r1 = [clean_text(x) for x in rows[i + 1]]
             if not r0 or not r1:
                 continue
-            if (r0[0].lower().startswith("aufgabe") and r1[0].lower().startswith("antwort")):
+            if r0[0].lower().startswith("aufgabe") and r1[0].lower().startswith(
+                "antwort"
+            ):
                 labels = [x for x in r0[1:] if x]
                 answers = [x for x in r1[1:] if x]
                 if not labels or not answers:
@@ -318,11 +326,14 @@ def extract_tables_via_fitz(page: fitz.Page) -> list[RowPair]:
                     answers = answers + [""] * (len(labels) - len(answers))
                 elif len(answers) > len(labels):
                     answers = answers[: len(labels)]
-                rowpairs.append(RowPair(labels=labels, answers=answers, bbox=fitz.Rect(*tab.bbox)))
+                rowpairs.append(
+                    RowPair(labels=labels, answers=answers, bbox=fitz.Rect(*tab.bbox))
+                )
     return rowpairs
 
 
 # ------------------------- Fallback Extraction (words) ----------------------
+
 
 def extract_tables_via_words(page: fitz.Page) -> list[RowPair]:
     """Fallback strategy using word lines to pair Aufgabe/Antwort rows.
@@ -339,7 +350,9 @@ def extract_tables_via_words(page: fitz.Page) -> list[RowPair]:
         lines.setdefault(key, []).append((x0, y0, x1, y1, text))
 
     # Sort lines in reading order
-    ordered_keys = sorted(lines.keys(), key=lambda k: (k[0], min(t[1] for t in lines[k])))
+    ordered_keys = sorted(
+        lines.keys(), key=lambda k: (k[0], min(t[1] for t in lines[k]))
+    )
 
     # Build simple line objects
     line_objs: list[tuple[str, fitz.Rect, list[str]]] = []  # (text, bbox, tokens)
@@ -362,7 +375,9 @@ def extract_tables_via_words(page: fitz.Page) -> list[RowPair]:
         if not toks0 or not toks1:
             i += 1
             continue
-        if clean_text(toks0[0]).lower().startswith("aufgabe") and clean_text(toks1[0]).lower().startswith("antwort"):
+        if clean_text(toks0[0]).lower().startswith("aufgabe") and clean_text(
+            toks1[0]
+        ).lower().startswith("antwort"):
             labels = [t for t in toks0[1:] if clean_text(t)]
             answers = [t for t in toks1[1:] if clean_text(t)]
             # Guard: sometimes labels spill over multiple spaces; limit to letters/numbers
@@ -382,17 +397,24 @@ def extract_tables_via_words(page: fitz.Page) -> list[RowPair]:
 
     return rowpairs
 
+
 """
 Debug overlay utilities are defined above process_pdf so they are available
 when debug overlays are requested from within process_pdf during script
 execution (which happens before the end of file is executed).
 """
 
+
 def _ensure_dir(p: Path) -> None:
     p.mkdir(parents=True, exist_ok=True)
 
 
-def _draw_label(draw: ImageDraw.ImageDraw, xy: tuple[int, int], text: str, fill: tuple[int, int, int] = (255, 255, 255)) -> None:
+def _draw_label(
+    draw: ImageDraw.ImageDraw,
+    xy: tuple[int, int],
+    text: str,
+    fill: tuple[int, int, int] = (255, 255, 255),
+) -> None:
     x, y = xy
     pad = 4
     try:
@@ -426,20 +448,30 @@ def save_page_debug_overlay(
 
     # Draw headings (blue)
     for h in headings:
-        rect = [int(h.bbox.x0 * zoom), int(h.bbox.y0 * zoom), int(h.bbox.x1 * zoom), int(h.bbox.y1 * zoom)]
+        rect = [
+            int(h.bbox.x0 * zoom),
+            int(h.bbox.y0 * zoom),
+            int(h.bbox.x1 * zoom),
+            int(h.bbox.y1 * zoom),
+        ]
         draw.rectangle(rect, outline=(30, 144, 255, 255), width=3)
         _draw_label(draw, (rect[0] + 2, rect[1] + 2), f"{h.group}")
 
     # Draw rowpairs (green)
     for rp, grp in associations:
-        rect = [int(rp.bbox.x0 * zoom), int(rp.bbox.y0 * zoom), int(rp.bbox.x1 * zoom), int(rp.bbox.y1 * zoom)]
+        rect = [
+            int(rp.bbox.x0 * zoom),
+            int(rp.bbox.y0 * zoom),
+            int(rp.bbox.x1 * zoom),
+            int(rp.bbox.y1 * zoom),
+        ]
         draw.rectangle(rect, outline=(50, 205, 50, 255), width=3)
         tag = f"{grp or 'UNASSIGNED'} | {len(rp.labels)} labels / {len(rp.answers)} answers"
         _draw_label(draw, (rect[0] + 2, rect[1] + 2), tag)
 
     debug_dir = Path(out_dir) / "debug"
     _ensure_dir(debug_dir)
-    png_path = debug_dir / f"{year}_page_{page_index+1}.png"
+    png_path = debug_dir / f"{year}_page_{page_index + 1}.png"
     img.save(png_path)
 
     # Sidecar JSON with raw details for the page
@@ -447,13 +479,26 @@ def save_page_debug_overlay(
         "year": year,
         "page": page_index + 1,
         "headings": [
-            {"group": h.group, "bbox": [round(h.bbox.x0, 2), round(h.bbox.y0, 2), round(h.bbox.x1, 2), round(h.bbox.y1, 2)]}
+            {
+                "group": h.group,
+                "bbox": [
+                    round(h.bbox.x0, 2),
+                    round(h.bbox.y0, 2),
+                    round(h.bbox.x1, 2),
+                    round(h.bbox.y1, 2),
+                ],
+            }
             for h in headings
         ],
         "rowpairs": [
             {
                 "group": grp,
-                "bbox": [round(rp.bbox.x0, 2), round(rp.bbox.y0, 2), round(rp.bbox.x1, 2), round(rp.bbox.y1, 2)],
+                "bbox": [
+                    round(rp.bbox.x0, 2),
+                    round(rp.bbox.y0, 2),
+                    round(rp.bbox.x1, 2),
+                    round(rp.bbox.y1, 2),
+                ],
                 "labels_count": len(rp.labels),
                 "answers_count": len(rp.answers),
                 "labels_preview": rp.labels[:5],
@@ -468,6 +513,7 @@ def save_page_debug_overlay(
 
 # ----------------------- Region-guided Extraction ---------------------------
 
+
 def _column_split(page: fitz.Page, headings: list[Heading]) -> float:
     # If we have headings on both sides, split between min and max center x
     if headings:
@@ -479,7 +525,9 @@ def _column_split(page: fitz.Page, headings: list[Heading]) -> float:
     return (page.rect.x0 + page.rect.x1) / 2.0
 
 
-def compute_group_regions(page: fitz.Page, headings: list[Heading]) -> dict[str, fitz.Rect]:
+def compute_group_regions(
+    page: fitz.Page, headings: list[Heading]
+) -> dict[str, fitz.Rect]:
     """Compute a conservative region for each grade group based on headings.
 
     - Split the page into two columns at a vertical divider.
@@ -506,7 +554,11 @@ def compute_group_regions(page: fitz.Page, headings: list[Heading]) -> dict[str,
     for col, hs in (("left", left), ("right", right)):
         for i, h in enumerate(hs):
             top = h.bbox.y1 + margin
-            bottom = (hs[i + 1].bbox.y0 - margin) if i + 1 < len(hs) else (page.rect.y1 - margin)
+            bottom = (
+                (hs[i + 1].bbox.y0 - margin)
+                if i + 1 < len(hs)
+                else (page.rect.y1 - margin)
+            )
             if col == "left":
                 x0, x1 = page.rect.x0 + margin, split_x - margin + pad_x
             else:
@@ -547,7 +599,13 @@ def extract_group_rowpairs(page: fitz.Page, region: fitz.Rect) -> list[RowPair]:
     def collect_row_tokens(anchor: Word) -> tuple[list[str], fitz.Rect]:
         ax1 = anchor[2]
         ay = y_center(anchor)
-        toks: list[Word] = [w for w in wlist if (w is not anchor and abs(y_center(w) - ay) <= y_tol and w[0] >= ax1 - 4.0)]
+        toks: list[Word] = [
+            w
+            for w in wlist
+            if (
+                w is not anchor and abs(y_center(w) - ay) <= y_tol and w[0] >= ax1 - 4.0
+            )
+        ]
         toks.sort(key=lambda w: w[0])
         if not toks:
             return [], fitz.Rect(ax1, anchor[1], ax1, anchor[3])
@@ -606,6 +664,7 @@ def extract_group_rowpairs(page: fitz.Page, region: fitz.Rect) -> list[RowPair]:
 
     return rowpairs
 
+
 def extract_tables_via_bands(page: fitz.Page) -> list[RowPair]:
     """Robust fallback using y-bands anchored at the tokens 'Aufgabe'/'Antwort'.
 
@@ -617,13 +676,20 @@ def extract_tables_via_bands(page: fitz.Page) -> list[RowPair]:
       3) Pair each Aufgabe-band to the nearest Antwort-band below it.
     """
     words = page.get_text("words") or []
-    wlist: list[Word] = [(float(x0), float(y0), float(x1), float(y1), str(t)) for x0, y0, x1, y1, t, *_ in words]
+    wlist: list[Word] = [
+        (float(x0), float(y0), float(x1), float(y1), str(t))
+        for x0, y0, x1, y1, t, *_ in words
+    ]
 
     def y_center(w: Word) -> float:
         return (w[1] + w[3]) / 2.0
 
-    aufgaben: list[Word] = [w for w in wlist if clean_text(w[4]).lower().startswith("aufgabe")]
-    antworten: list[Word] = [w for w in wlist if clean_text(w[4]).lower().startswith("antwort")]
+    aufgaben: list[Word] = [
+        w for w in wlist if clean_text(w[4]).lower().startswith("aufgabe")
+    ]
+    antworten: list[Word] = [
+        w for w in wlist if clean_text(w[4]).lower().startswith("antwort")
+    ]
 
     if not aufgaben or not antworten:
         return []
@@ -637,7 +703,11 @@ def extract_tables_via_bands(page: fitz.Page) -> list[RowPair]:
         ax1 = anchor[2]
         ay = y_center(anchor)
         # Find the next 'Aufgabe' (or 'Antwort') anchor to the right on nearly the same y
-        candidates = [w for w in aufgaben + antworten if w is not anchor and abs(y_center(w) - ay) <= 20.0 and w[0] > ax1]
+        candidates = [
+            w
+            for w in aufgaben + antworten
+            if w is not anchor and abs(y_center(w) - ay) <= 20.0 and w[0] > ax1
+        ]
         if not candidates:
             return None
         nxt = min(candidates, key=lambda w: w[0])
@@ -651,12 +721,15 @@ def extract_tables_via_bands(page: fitz.Page) -> list[RowPair]:
         # Column-aware bound: keep tokens on the same side of the page as the anchor
         if anchor[0] < mid_x:
             bound = min(rb, mid_x) if rb is not None else mid_x
+
             def horiz_ok(x: float) -> bool:
                 return x < bound
         else:
             bound = max(rb, mid_x) if rb is not None else mid_x
+
             def horiz_ok(x: float) -> bool:
                 return x > bound
+
         # Gather candidate tokens solely by y and being to the right of the label
         candidates: list[tuple[float, Word]] = []
         for w in wlist:
@@ -754,6 +827,7 @@ def extract_tables_via_bands(page: fitz.Page) -> list[RowPair]:
 
 # ------------------------------- Orchestration ------------------------------
 
+
 def validate_year_obj(obj: dict[str, Any]) -> list[str]:
     """Return a list of human-readable validation warnings for a year JSON.
 
@@ -777,13 +851,17 @@ def validate_year_obj(obj: dict[str, Any]) -> list[str]:
         miss_decl = set(g.get("missing_answers", []) or [])
 
         if counts != len(order):
-            warnings.append(f"{group}: counts field {counts} != len(order) {len(order)}")
+            warnings.append(
+                f"{group}: counts field {counts} != len(order) {len(order)}"
+            )
 
         # duplicates
         seen = set()
         dups = [lab for lab in order if (lab in seen) or seen.add(lab)]
         if dups:
-            warnings.append(f"{group}: duplicate labels in order: {sorted(set(dups))[:10]}")
+            warnings.append(
+                f"{group}: duplicate labels in order: {sorted(set(dups))[:10]}"
+            )
 
         # scheme conformity
         if scheme not in {"numeric", "abc"}:
@@ -799,14 +877,20 @@ def validate_year_obj(obj: dict[str, Any]) -> list[str]:
                 if not pat_num.match(str(lab)):
                     bad_labels.append(lab)
         if bad_labels:
-            warnings.append(f"{group}: labels not matching scheme {scheme}: {bad_labels[:10]}")
+            warnings.append(
+                f"{group}: labels not matching scheme {scheme}: {bad_labels[:10]}"
+            )
 
         # range check (not assuming exact, just a sanity range)
         if not (5 <= len(order) <= 30):
-            warnings.append(f"{group}: unusual label count {len(order)} (expected 5..30)")
+            warnings.append(
+                f"{group}: unusual label count {len(order)} (expected 5..30)"
+            )
 
         # answers A-E only
-        bad_ans = [k for k, v in answers.items() if str(v) not in {"A", "B", "C", "D", "E"}]
+        bad_ans = [
+            k for k, v in answers.items() if str(v) not in {"A", "B", "C", "D", "E"}
+        ]
         if bad_ans:
             warnings.append(f"{group}: non A-E answers for labels {bad_ans[:10]}")
 
@@ -826,6 +910,7 @@ def validate_year_obj(obj: dict[str, Any]) -> list[str]:
     if not gg:
         warnings.append("no grade_groups produced")
     return warnings
+
 
 def process_pdf(
     pdf_path: str,
@@ -855,7 +940,9 @@ def process_pdf(
 
             acc = accumulators.get(current_year)
             if acc is None:
-                acc = YearAccumulator(year=current_year, source_pdf=os.path.relpath(pdf_path))
+                acc = YearAccumulator(
+                    year=current_year, source_pdf=os.path.relpath(pdf_path)
+                )
                 accumulators[current_year] = acc
 
             headings = find_grade_headings(page)
@@ -869,7 +956,7 @@ def process_pdf(
                         associations.append((rp, grp))
                         if strict and len(rp.labels) != len(rp.answers):
                             raise RuntimeError(
-                                f"Label/Answer count mismatch on page {page_index+1} group {grp}: {len(rp.labels)} vs {len(rp.answers)}"
+                                f"Label/Answer count mismatch on page {page_index + 1} group {grp}: {len(rp.labels)} vs {len(rp.answers)}"
                             )
                         acc.add_rowpair(grp, rp)
             else:
@@ -885,12 +972,12 @@ def process_pdf(
                     associations.append((rp, grp))
                     if not grp:
                         acc.warnings.append(
-                            f"page {page_index+1}: could not associate a table at bbox {tuple(round(v,1) for v in rp.bbox)} to any group"
+                            f"page {page_index + 1}: could not associate a table at bbox {tuple(round(v, 1) for v in rp.bbox)} to any group"
                         )
                         continue
                     if strict and len(rp.labels) != len(rp.answers):
                         raise RuntimeError(
-                            f"Label/Answer count mismatch on page {page_index+1} group {grp}: {len(rp.labels)} vs {len(rp.answers)}"
+                            f"Label/Answer count mismatch on page {page_index + 1} group {grp}: {len(rp.labels)} vs {len(rp.answers)}"
                         )
                     acc.add_rowpair(grp, rp)
 
@@ -908,7 +995,7 @@ def process_pdf(
                 except Exception as e:
                     # Non-fatal
                     if debug:
-                        print(f"Debug overlay failed for page {page_index+1}: {e}")
+                        print(f"Debug overlay failed for page {page_index + 1}: {e}")
 
         # After all pages, write one JSON per year
         for year, acc in sorted(accumulators.items()):
@@ -924,7 +1011,9 @@ def process_pdf(
             out_path = Path(out_dir) / f"{year}.json"
             if out_path.exists() and not overwrite:
                 # Merge with existing? For safety, require overwrite flag
-                raise FileExistsError(f"Refusing to overwrite existing {out_path}. Use --overwrite to allow.")
+                raise FileExistsError(
+                    f"Refusing to overwrite existing {out_path}. Use --overwrite to allow."
+                )
             atomic_write_json(out_path, obj)
             created.append(out_path)
 
@@ -935,14 +1024,29 @@ def process_pdf(
 
 # ---------------------------------- CLI ------------------------------------
 
+
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Extract answer keys from central answer-key PDF using PyMuPDF.")
+    p = argparse.ArgumentParser(
+        description="Extract answer keys from central answer-key PDF using PyMuPDF."
+    )
     p.add_argument("--pdf", required=True, help="Path to the central answer-key PDF")
-    p.add_argument("--out", default="answer_keys", help="Output directory for per-year JSON files")
-    p.add_argument("--overwrite", action="store_true", help="Overwrite existing JSON files")
+    p.add_argument(
+        "--out", default="answer_keys", help="Output directory for per-year JSON files"
+    )
+    p.add_argument(
+        "--overwrite", action="store_true", help="Overwrite existing JSON files"
+    )
     p.add_argument("--debug", action="store_true", help="Enable additional logging")
-    p.add_argument("--strict", action="store_true", help="Fail on any label/answer count mismatches")
-    p.add_argument("--debug-overlays", action="store_true", help="Save per-page debug PNG overlays under <out>/debug/")
+    p.add_argument(
+        "--strict",
+        action="store_true",
+        help="Fail on any label/answer count mismatches",
+    )
+    p.add_argument(
+        "--debug-overlays",
+        action="store_true",
+        help="Save per-page debug PNG overlays under <out>/debug/",
+    )
     return p
 
 

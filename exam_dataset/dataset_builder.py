@@ -19,7 +19,9 @@ from .pdf_render import ensure_dir, pdf_sha256, render_bbox, stack_vertical
 from .points import points_for_index
 
 
-def render_text_crop(exam: ExamAnnotations, q: QuestionUnit, doc: Optional[fitz.Document] = None) -> Tuple[str, int]:
+def render_text_crop(
+    exam: ExamAnnotations, q: QuestionUnit, doc: Optional[fitz.Document] = None
+) -> Tuple[str, int]:
     # Mask only this question's own image masks to avoid over-masking text.
     overlaps: List[BBox] = list(q.associated_images) + list(q.image_options.values())
     imgs: List[Image.Image] = []
@@ -27,7 +29,9 @@ def render_text_crop(exam: ExamAnnotations, q: QuestionUnit, doc: Optional[fitz.
     for tb in q.text_boxes:
         img = render_bbox(exam.pdf_path, tb, mask_overlaps=overlaps, doc=doc)
         imgs.append(img)
-        dpis.append(round(img.info.get("dpi", (300, 300))[0]) if img.info.get("dpi") else 0)
+        dpis.append(
+            round(img.info.get("dpi", (300, 300))[0]) if img.info.get("dpi") else 0
+        )
     if len(imgs) == 1:
         out = imgs[0]
     else:
@@ -40,7 +44,9 @@ def render_text_crop(exam: ExamAnnotations, q: QuestionUnit, doc: Optional[fitz.
     return out_path, used_dpi
 
 
-def render_image_crops(exam: ExamAnnotations, q: QuestionUnit, doc: Optional[fitz.Document] = None) -> Tuple[Dict[str, str], List[str], Dict[str, int]]:
+def render_image_crops(
+    exam: ExamAnnotations, q: QuestionUnit, doc: Optional[fitz.Document] = None
+) -> Tuple[Dict[str, str], List[str], Dict[str, int]]:
     opt_dir = os.path.join(PATHS.crops, "option_image")
     assoc_dir = os.path.join(PATHS.crops, "assoc_image")
     ensure_dir(opt_dir)
@@ -53,7 +59,9 @@ def render_image_crops(exam: ExamAnnotations, q: QuestionUnit, doc: Optional[fit
         p = os.path.join(opt_dir, f"{q.exam_id}_{q.question_id}_opt{letter}.png")
         im.save(p)
         option_paths[letter] = p
-        dpi_used[f"opt_{letter}"] = round(im.info.get("dpi", (0, 0))[0]) if im.info.get("dpi") else 0
+        dpi_used[f"opt_{letter}"] = (
+            round(im.info.get("dpi", (0, 0))[0]) if im.info.get("dpi") else 0
+        )
 
     assoc_paths: List[str] = []
     for i, bb in enumerate(q.associated_images, start=1):
@@ -61,7 +69,9 @@ def render_image_crops(exam: ExamAnnotations, q: QuestionUnit, doc: Optional[fit
         p = os.path.join(assoc_dir, f"{q.exam_id}_{q.question_id}_img{i}.png")
         im.save(p)
         assoc_paths.append(p)
-        dpi_used[f"img_{i}"] = round(im.info.get("dpi", (0, 0))[0]) if im.info.get("dpi") else 0
+        dpi_used[f"img_{i}"] = (
+            round(im.info.get("dpi", (0, 0))[0]) if im.info.get("dpi") else 0
+        )
 
     return option_paths, assoc_paths, dpi_used
 
@@ -240,7 +250,9 @@ def run_build(
         try:
             for q in exam.questions:
                 q_img_path, dpi_text = render_text_crop(exam, q, doc=doc)
-                option_paths, assoc_paths, dpi_map = render_image_crops(exam, q, doc=doc)
+                option_paths, assoc_paths, dpi_map = render_image_crops(
+                    exam, q, doc=doc
+                )
                 dpi_map["question"] = dpi_text
 
                 q_img_paths.append(q_img_path)
@@ -318,8 +330,12 @@ def run_build(
         answers_present = sum(1 for r in out_records if r.get("answer"))
         multimodal_true = sum(1 for r in out_records if r.get("multimodal"))
         ocr_nonempty = sum(1 for r in out_records if (r.get("problem_statement") or ""))
-        needs_review_true = sum(1 for r in out_records if (r.get("quality") or {}).get("needs_review"))
-        answer_missing_true = sum(1 for r in out_records if (r.get("quality") or {}).get("answer_missing"))
+        needs_review_true = sum(
+            1 for r in out_records if (r.get("quality") or {}).get("needs_review")
+        )
+        answer_missing_true = sum(
+            1 for r in out_records if (r.get("quality") or {}).get("answer_missing")
+        )
         options_full = 0
         for r in out_records:
             have = 0
@@ -370,7 +386,9 @@ def _record_to_json(rec: DatasetRecord) -> dict:
             "pdf_sha256": rec.provenance.pdf_sha256,
             "text_boxes": [b.__dict__ for b in rec.provenance.text_boxes],
             "associated_images": [b.__dict__ for b in rec.provenance.associated_images],
-            "image_options": {k: v.__dict__ for k, v in rec.provenance.image_options.items()},
+            "image_options": {
+                k: v.__dict__ for k, v in rec.provenance.image_options.items()
+            },
             "dpi_used": rec.provenance.dpi_used,
             "renderer": rec.provenance.renderer,
             "ocr_engine": rec.provenance.ocr_engine,

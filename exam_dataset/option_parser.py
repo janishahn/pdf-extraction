@@ -5,10 +5,10 @@ from typing import Dict, Tuple
 
 
 ANCHORS = [
-    r"^[ \t|]*\(([A-E])\)[ \t]+",                            # (A) ...
-    r"^[ \t|]*\((?:\\mathbf\{)?([A-E])(?:\})?\)[ \t]+",     # (\mathbf{A}) ...
+    r"^[ \t|]*\(([A-E])\)[ \t]+",  # (A) ...
+    r"^[ \t|]*\((?:\\mathbf\{)?([A-E])(?:\})?\)[ \t]+",  # (\mathbf{A}) ...
     r"^[ \t|]*(?:\\mathbf\{)?([A-E])(?:\})?[\)\.:\-][ \t]+",  # A) / A. / A:
-    r"^[ \t|]*([A-E])[ \t]+\–[ \t]+"                          # A – ...
+    r"^[ \t|]*([A-E])[ \t]+\–[ \t]+",  # A – ...
 ]
 
 
@@ -37,13 +37,19 @@ def split_options(text: str) -> Tuple[str, Dict[str, str]]:
             end = idxs[j + 1] if j + 1 < len(idxs) else len(lines)
             chunk = "\n".join(lines[start:end])
             chunk = re.sub(r"^[ \t|]*\(([A-E])\)[ \t]+", "", chunk)
-            chunk = re.sub(r"^[ \t|]*\((?:\\mathbf\{)?([A-E])(?:\})?\)[ \t]+", "", chunk)
-            chunk = re.sub(r"^[ \t|]*(?:\\mathbf\{)?([A-E])(?:\})?[\)\.:\-][ \t]+", "", chunk)
+            chunk = re.sub(
+                r"^[ \t|]*\((?:\\mathbf\{)?([A-E])(?:\})?\)[ \t]+", "", chunk
+            )
+            chunk = re.sub(
+                r"^[ \t|]*(?:\\mathbf\{)?([A-E])(?:\})?[\)\.:\-][ \t]+", "", chunk
+            )
             chunk = re.sub(r"^[ \t|]*([A-E])[ \t]+\–[ \t]+", "", chunk)
             chunk = re.sub(r"^[ \t]*\\mathbf\{([A-E])\}[ \t]+", "", chunk)
             chunk = re.sub(r"^[ \t]*\*\*([A-E])\*\*[ \t]+", "", chunk)
             chunk = re.sub(r"^[ \t]*\|[ \t]*([A-E])[\)\.:\-]?[ \t]*\|[ \t]+", "", chunk)
-            chunk = re.sub(r"^[ \t]*\|[ \t]*\\mathbf\{([A-E])\}[ \t]*\|[ \t]+", "", chunk)
+            chunk = re.sub(
+                r"^[ \t]*\|[ \t]*\\mathbf\{([A-E])\}[ \t]*\|[ \t]+", "", chunk
+            )
             chunk = re.sub(r"^[ \t]*([A-E])[ \t]+[\-–—][ \t]+", "", chunk)
             parts[letter] = chunk.strip()
         stem = "\n".join(lines[: idxs[0]]).strip()

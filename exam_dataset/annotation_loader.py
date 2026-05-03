@@ -5,9 +5,10 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 from .models import BBox, QuestionUnit
+
 try:
     # Use storage migration/backfill when parsing GUI state files
     from storage import load_state  # type: ignore
@@ -65,7 +66,9 @@ def parse_exam_annotation(json_path: str, pdf_path: str) -> ExamAnnotations:
         items = data.get("questions") or []
         for q in items:
             qid = str(q.get("question_id"))
-            problem_number = str(q.get("problem_number") or q.get("number") or q.get("index") or "")
+            problem_number = str(
+                q.get("problem_number") or q.get("number") or q.get("index") or ""
+            )
             text_boxes = [
                 BBox(
                     page_index=int(b["page_index"]),
@@ -104,7 +107,9 @@ def parse_exam_annotation(json_path: str, pdf_path: str) -> ExamAnnotations:
                     problem_number=problem_number,
                     year=year,
                     group=group,
-                    text_boxes=sorted(text_boxes, key=lambda r: (r.page_index, r.y0, r.x0)),
+                    text_boxes=sorted(
+                        text_boxes, key=lambda r: (r.page_index, r.y0, r.x0)
+                    ),
                     associated_images=associated_images,
                     image_options=image_options,
                 )
@@ -124,7 +129,9 @@ def parse_exam_annotation(json_path: str, pdf_path: str) -> ExamAnnotations:
         def px_to_pt(v: float, dpi: int = 300) -> float:
             return float(v) * 72.0 / float(dpi)
 
-        def bbox_from_points(pts: List[List[float]]) -> Tuple[float, float, float, float]:
+        def bbox_from_points(
+            pts: List[List[float]],
+        ) -> Tuple[float, float, float, float]:
             xs = [float(p[0]) for p in pts] if pts else [0.0]
             ys = [float(p[1]) for p in pts] if pts else [0.0]
             return min(xs), min(ys), max(xs), max(ys)
@@ -154,12 +161,28 @@ def parse_exam_annotation(json_path: str, pdf_path: str) -> ExamAnnotations:
                     or m.get("question_id")
                     or f"p{page_str}_{m.get('id')}"
                 )
-                g = all_grouped.setdefault(qid, {"boxes": [], "assoc": [], "opts": {}, "pn": None, "first_box": None})
+                g = all_grouped.setdefault(
+                    qid,
+                    {
+                        "boxes": [],
+                        "assoc": [],
+                        "opts": {},
+                        "pn": None,
+                        "first_box": None,
+                    },
+                )
 
                 pts_px = m.get("points") or []
                 x0, y0, x1, y1 = bbox_from_points(pts_px)
                 pts_pt = [(px_to_pt(px), px_to_pt(py)) for px, py in pts_px]
-                bb = BBox(page_index=page_index, x0=px_to_pt(x0), y0=px_to_pt(y0), x1=px_to_pt(x1), y1=px_to_pt(y1), points=pts_pt)
+                bb = BBox(
+                    page_index=page_index,
+                    x0=px_to_pt(x0),
+                    y0=px_to_pt(y0),
+                    x1=px_to_pt(x1),
+                    y1=px_to_pt(y1),
+                    points=pts_pt,
+                )
                 g["boxes"].append(bb)
                 if g["first_box"] is None:
                     g["first_box"] = bb
@@ -180,7 +203,14 @@ def parse_exam_annotation(json_path: str, pdf_path: str) -> ExamAnnotations:
                     ipts_px = im.get("points") or []
                     ix0, iy0, ix1, iy1 = bbox_from_points(ipts_px)
                     ipts_pt = [(px_to_pt(px), px_to_pt(py)) for px, py in ipts_px]
-                    ibb = BBox(page_index=page_index, x0=px_to_pt(ix0), y0=px_to_pt(iy0), x1=px_to_pt(ix1), y1=px_to_pt(iy1), points=ipts_pt)
+                    ibb = BBox(
+                        page_index=page_index,
+                        x0=px_to_pt(ix0),
+                        y0=px_to_pt(iy0),
+                        x1=px_to_pt(ix1),
+                        y1=px_to_pt(iy1),
+                        points=ipts_pt,
+                    )
                     lab = str(im.get("option_label") or "").strip().upper()
                     checked = bool(im.get("option_label_checked"))
                     if lab in {"A", "B", "C", "D", "E"}:
@@ -190,14 +220,16 @@ def parse_exam_annotation(json_path: str, pdf_path: str) -> ExamAnnotations:
                     else:
                         g["assoc"].append(ibb)
 
-
         # Assign sequential problem numbers for any missing
         # Sort by page_index, y0, x0 of the first text box
-        ordered = sorted(all_grouped.items(), key=lambda kv: (
-            getattr(kv[1].get("first_box"), "page_index", 0),
-            getattr(kv[1].get("first_box"), "y0", 0.0),
-            getattr(kv[1].get("first_box"), "x0", 0.0),
-        ))
+        ordered = sorted(
+            all_grouped.items(),
+            key=lambda kv: (
+                getattr(kv[1].get("first_box"), "page_index", 0),
+                getattr(kv[1].get("first_box"), "y0", 0.0),
+                getattr(kv[1].get("first_box"), "x0", 0.0),
+            ),
+        )
         seq = 1
         for qid, g in ordered:
             if not g.get("pn"):
@@ -213,7 +245,9 @@ def parse_exam_annotation(json_path: str, pdf_path: str) -> ExamAnnotations:
                     problem_number=str(g.get("pn") or ""),
                     year=year,
                     group=group,
-                    text_boxes=sorted(g.get("boxes") or [], key=lambda r: (r.page_index, r.y0, r.x0)),
+                    text_boxes=sorted(
+                        g.get("boxes") or [], key=lambda r: (r.page_index, r.y0, r.x0)
+                    ),
                     associated_images=g.get("assoc") or [],
                     image_options=g.get("opts") or {},
                 )
